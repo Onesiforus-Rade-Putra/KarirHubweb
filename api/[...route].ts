@@ -55,11 +55,12 @@ function virtualAccount(method?: string) {
 }
 
 async function handleRegister(req: any, res: any) {
-  const { name, email, password, role, company } = req.body || {};
+  const { email, password, role, company } = req.body || {};
+  const name = req.body?.name || req.body?.fullName || req.body?.full_name;
   const userRole = parseRole(role);
 
   if (!name || !email || !password || !userRole) return sendError(res, 400, "Nama, email, password, dan role wajib diisi.");
-  if (password.length < 8) return sendError(res, 400, "Password minimal harus 8 karakter.");
+  if (password.length < 6) return sendError(res, 400, "Password minimal 6 karakter.");
 
   const { data: authData, error: createError } = await supabaseAdmin.auth.admin.createUser({
     email,
@@ -68,12 +69,17 @@ async function handleRegister(req: any, res: any) {
     user_metadata: { full_name: name, role: userRole },
   });
 
-  if (createError || !authData.user) return sendError(res, 400, createError?.message || "Gagal membuat user.");
+  if (createError || !authData.user) {
+    const message = createError?.message?.toLowerCase().includes("already")
+      ? "Email sudah terdaftar."
+      : createError?.message || "Gagal membuat user.";
+    return sendError(res, 400, message);
+  }
 
   const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(email)}`;
   const { data: profile, error: profileError } = await supabaseAdmin
     .from("user_profiles")
-    .insert({
+    .upsert({
       id: authData.user.id,
       full_name: name,
       role: userRole,
