@@ -11,9 +11,32 @@ const orderSelect = "id,buyer_name,buyer_email,service_title,service_price,requi
 const sellerOrderSelect = "id,buyer_name,buyer_email,service_title,service_price,requirements,status,order_status,seller_notes,result_url,created_at,services!inner(id,title,seller_id)";
 const appSelect = "id,user_id,job_id,candidate_name,candidate_title,candidate_email,candidate_rating,candidate_experience,status,application_status,recruiter_notes,resume_summary,created_at,jobs!inner(id,title,recruiter_id)";
 
+function routeValueToString(value: unknown) {
+  if (Array.isArray(value)) return value.filter(Boolean).join("/");
+  return typeof value === "string" ? value : "";
+}
+
+function normalizeApiPath(req: any) {
+  const query = req.query || {};
+  const routeFromQuery = routeValueToString(query.route || query.slug || query.path || query["0"]).replace(/^\/+/, "");
+
+  let pathname = "/";
+  try {
+    pathname = new URL(req.url || "/", `https://${req.headers.host || "localhost"}`).pathname;
+  } catch {
+    pathname = "/";
+  }
+
+  if (pathname === "/" || pathname === "/api" || pathname === "/api/") {
+    pathname = routeFromQuery ? `/api/${routeFromQuery}` : "/api";
+  }
+
+  pathname = pathname.replace(/\/+$/, "");
+  return pathname || "/api";
+}
+
 function routeOf(req: any) {
-  const route = req.query?.route;
-  return Array.isArray(route) ? route.join("/") : route || "";
+  return normalizeApiPath(req).replace(/^\/api\/?/, "");
 }
 
 function publicUser(profile: any, email: string) {
