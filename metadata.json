@@ -1,0 +1,6 @@
+{
+  "name": "KarirHub",
+  "description": "Platform rekruitmen dan jasa karir terintegrasi: Portal lowongan kerja, AI ATS Resume Builder, AI Foto CV Instan, Jasa Karir, dan Talent Pool.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
