@@ -1,4 +1,4 @@
-import { requireUser } from "./http";
+import { requireUser } from "./http.js";
 
 export async function requireRecruiter(req: any, supabaseAdmin: any) {
   const { user, error } = await requireUser(req, supabaseAdmin);

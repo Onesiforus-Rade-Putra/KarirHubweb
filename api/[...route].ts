@@ -1,8 +1,8 @@
-import { applyCors, parseRole, requireUser, sendError, sendJson } from "./_lib/http";
-import { mapApplication, mapJob, mapOrder, mapRecruiterApplication, mapSellerOrder, mapService, mapTalentCandidate, mapTransaction } from "./_lib/mappers";
-import { recruiterApplicationStatusToPublic, requireRecruiter } from "./_lib/recruiter";
-import { parseServiceCategory, requireSeller, sellerOrderStatusToPublic } from "./_lib/seller";
-import { supabaseAdmin, supabaseAnon } from "./_lib/supabase";
+import { applyCors, parseRole, requireUser, sendError, sendJson } from "./_lib/http.js";
+import { mapApplication, mapJob, mapOrder, mapRecruiterApplication, mapSellerOrder, mapService, mapTalentCandidate, mapTransaction } from "./_lib/mappers.js";
+import { recruiterApplicationStatusToPublic, requireRecruiter } from "./_lib/recruiter.js";
+import { parseServiceCategory, requireSeller, sellerOrderStatusToPublic } from "./_lib/seller.js";
+import { supabaseAdmin, supabaseAnon } from "./_lib/supabase.js";
 
 const serviceSelect = "id,title,provider_name,provider_avatar,category,rating,reviews_count,price,duration,description,active,status,seller_id,created_at";
 const publicServiceSelect = "id,title,provider_name,provider_avatar,category,rating,reviews_count,price,duration,description,active";
