@@ -1,4 +1,4 @@
-import { Applicant, Candidate, CareerService, Job, ServiceOrder, Transaction } from "../types";
+import { Applicant, Candidate, CareerService, Job, ResumeData, ServiceOrder, Transaction } from "../types";
 import { getAuthToken } from "./authApi";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
@@ -198,4 +198,50 @@ export async function fetchRecruiterTalentPool() {
 
 export async function fetchRecruiterStats() {
   return apiRequest<{ stats: RecruiterStatsSummary }>("/api/recruiter/stats");
+}
+
+export interface ResumeDraftPayload {
+  resume: ResumeData;
+  certifications: Array<{ id: string; name: string; issuer: string; year: string }>;
+  languages: Array<{ id: string; lang: string; level: string }>;
+  portfolioLink: string;
+}
+
+export async function fetchResumeDraft() {
+  return apiRequest<{
+    draft: null | {
+      id: string;
+      resume_data: ResumeDraftPayload;
+      generated_resume?: unknown;
+      updated_at: string;
+    };
+  }>("/api/resume-builder/draft");
+}
+
+export async function saveResumeDraft(payload: ResumeDraftPayload) {
+  return apiRequest<{ draft: { id: string; resume_data: ResumeDraftPayload; updated_at: string } }>("/api/resume-builder/draft", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function generateResume(payload: ResumeDraftPayload) {
+  return apiRequest<{ generatedResume: unknown; draft: { id: string; resume_data: ResumeDraftPayload; updated_at: string } }>("/api/resume-builder/generate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function enhanceResumeExperience(payload: { text: string; jobTitle?: string }) {
+  return apiRequest<{ enhancedText: string }>("/api/resume-builder/enhance", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchResumeKeywordSuggestions(payload: { jobTitle?: string; skills: string[] }) {
+  return apiRequest<{ keywords: string[] }>("/api/resume-builder/keywords", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

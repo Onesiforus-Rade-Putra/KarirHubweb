@@ -505,6 +505,172 @@ async function handleRecruiterStats(req: any, res: any) {
   return sendJson(res, 200, { stats: { total_jobs: jobs?.length || 0, active_jobs: (jobs || []).filter((job: any) => job.status === "aktif").length, closed_jobs: (jobs || []).filter((job: any) => job.status === "ditutup").length, total_applicants: applicants.length, applicants_reviewed: applicants.filter((app: any) => app.application_status === "reviewed").length, applicants_interview: applicants.filter((app: any) => app.application_status === "interview").length } });
 }
 
+function normalizeResumePayload(payload: any) {
+  return {
+    resume: payload?.resume || {},
+    certifications: Array.isArray(payload?.certifications) ? payload.certifications : [],
+    languages: Array.isArray(payload?.languages) ? payload.languages : [],
+    portfolioLink: payload?.portfolioLink || "",
+  };
+}
+
+function generateATSResume(payload: any) {
+  const draft = normalizeResumePayload(payload);
+  const resume = draft.resume || {};
+  const experience = Array.isArray(resume.experience) ? resume.experience : [];
+  const education = Array.isArray(resume.education) ? resume.education : [];
+  const skills = Array.isArray(resume.skills) ? resume.skills : [];
+
+  return {
+    personal: {
+      fullName: resume.fullName || "",
+      title: resume.title || "",
+      email: resume.email || "",
+      phone: resume.phone || "",
+      location: resume.address || "",
+      linkedin: resume.website || "",
+      portfolio: draft.portfolioLink || "",
+    },
+    summary: resume.summary || "",
+    experience: experience.map((item: any) => ({
+      position: item.position,
+      company: item.company,
+      period: [item.startDate, item.endDate].filter(Boolean).join(" - "),
+      bullets: String(item.description || "")
+        .split("\n")
+        .map((line) => line.replace(/^[-•*]\s*/, "").trim())
+        .filter(Boolean),
+    })),
+    education: education.map((item: any) => ({
+      degree: item.degree,
+      school: item.school,
+      period: [item.startDate, item.endDate].filter(Boolean).join(" - "),
+      details: item.description,
+    })),
+    skills,
+    certifications: draft.certifications,
+    languages: draft.languages,
+    template: resume.template || "modern",
+    atsScore: Math.min(98, 70 + Math.min(skills.length, 12) * 2 + Math.min(experience.length, 4) * 3),
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function enhanceExperienceText(text: string, jobTitle?: string) {
+  const role = jobTitle || "the target role";
+  const source = text || "Managed responsibilities and contributed to team goals.";
+  const firstLine = source.split("\n").find(Boolean) || source;
+
+  return [
+    `Led ${role.toLowerCase()} initiatives by translating business requirements into measurable deliverables.`,
+    `Developed ATS-friendly achievement bullets from prior responsibility: ${firstLine.replace(/^[-•*]\s*/, "").trim()}.`,
+    "Improved collaboration, delivery quality, and operational efficiency through structured documentation and cross-functional communication.",
+  ].join("\n");
+}
+
+function suggestResumeKeywords(jobTitle?: string, skills: string[] = []) {
+  const text = `${jobTitle || ""} ${skills.join(" ")}`.toLowerCase();
+  const suggestions = new Set<string>();
+
+  if (text.includes("front") || text.includes("react")) ["React", "TypeScript", "JavaScript", "REST API", "Responsive Design", "Git"].forEach((item) => suggestions.add(item));
+  if (text.includes("data")) ["SQL", "Python", "Dashboarding", "Data Visualization", "ETL", "Business Insight"].forEach((item) => suggestions.add(item));
+  if (text.includes("product")) ["Product Strategy", "PRD", "Agile", "User Research", "Roadmap", "Analytics"].forEach((item) => suggestions.add(item));
+  if (text.includes("design") || text.includes("ui")) ["Figma", "User Research", "Wireframing", "Prototyping", "Design System"].forEach((item) => suggestions.add(item));
+
+  ["Communication", "Problem Solving", "Cross-functional Collaboration"].forEach((item) => suggestions.add(item));
+  skills.forEach((skill) => suggestions.delete(skill));
+
+  return Array.from(suggestions).slice(0, 8);
+}
+
+async function handleResumeBuilder(route: string, req: any, res: any) {
+  const { user, error: authError } = await requireUser(req, supabaseAdmin);
+  if (!user) return sendError(res, 401, authError || "Session tidak valid.");
+
+  const action = route.replace(/^resume-builder\/?/, "");
+
+  if (action === "draft" && req.method === "GET") {
+    const { data, error } = await supabaseAdmin
+      .from("resume_drafts")
+      .select("id,resume_data,generated_resume,updated_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (error) return sendError(res, 500, "Gagal mengambil draft resume.", error.message);
+    return sendJson(res, 200, { draft: data || null });
+  }
+
+  if (action === "draft" && (req.method === "POST" || req.method === "PATCH")) {
+    const resumeData = normalizeResumePayload(req.body || {});
+    const { data, error } = await supabaseAdmin
+      .from("resume_drafts")
+      .upsert({ user_id: user.id, resume_data: resumeData })
+      .select("id,resume_data,generated_resume,updated_at")
+      .single();
+
+    if (error || !data) return sendError(res, 500, "Gagal menyimpan draft resume.", error?.message);
+    return sendJson(res, 200, { draft: data });
+  }
+
+  if (action === "draft" && req.method === "DELETE") {
+    const section = req.query?.section || req.body?.section;
+    const itemId = req.query?.id || req.body?.id;
+    const { data: existing, error: readError } = await supabaseAdmin
+      .from("resume_drafts")
+      .select("resume_data")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (readError) return sendError(res, 500, "Gagal membaca draft resume.", readError.message);
+    if (!existing) return sendJson(res, 200, { draft: null });
+
+    const draft = normalizeResumePayload(existing.resume_data);
+    if (section === "experience" || section === "education") {
+      draft.resume[section] = (draft.resume[section] || []).filter((item: any) => item.id !== itemId);
+    } else if (section === "skills") {
+      draft.resume.skills = (draft.resume.skills || []).filter((item: string) => item !== itemId);
+    } else if (section === "certifications") {
+      draft.certifications = draft.certifications.filter((item: any) => item.id !== itemId);
+    } else if (section === "languages") {
+      draft.languages = draft.languages.filter((item: any) => item.id !== itemId);
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("resume_drafts")
+      .upsert({ user_id: user.id, resume_data: draft })
+      .select("id,resume_data,generated_resume,updated_at")
+      .single();
+
+    if (error || !data) return sendError(res, 500, "Gagal menghapus bagian resume.", error?.message);
+    return sendJson(res, 200, { draft: data });
+  }
+
+  if (action === "generate" && req.method === "POST") {
+    const resumeData = normalizeResumePayload(req.body || {});
+    const generated = generateATSResume(resumeData);
+    const { data, error } = await supabaseAdmin
+      .from("resume_drafts")
+      .upsert({ user_id: user.id, resume_data: resumeData, generated_resume: generated })
+      .select("id,resume_data,generated_resume,updated_at")
+      .single();
+
+    if (error || !data) return sendError(res, 500, "Gagal generate resume.", error?.message);
+    return sendJson(res, 200, { generatedResume: generated, draft: data });
+  }
+
+  if (action === "enhance" && req.method === "POST") {
+    const { text, jobTitle } = req.body || {};
+    return sendJson(res, 200, { enhancedText: enhanceExperienceText(text || "", jobTitle) });
+  }
+
+  if (action === "keywords" && req.method === "POST") {
+    const { jobTitle, skills } = req.body || {};
+    return sendJson(res, 200, { keywords: suggestResumeKeywords(jobTitle, Array.isArray(skills) ? skills : []) });
+  }
+
+  return sendError(res, 404, `Endpoint /api/${route} tidak ditemukan.`);
+}
+
 export default async function handler(req: any, res: any) {
   if (applyCors(req, res)) return;
 
@@ -528,6 +694,7 @@ export default async function handler(req: any, res: any) {
     if (route === "recruiter/applicants") return handleRecruiterApplicants(req, res);
     if (route === "recruiter/talent-pool") return handleRecruiterTalent(req, res);
     if (route === "recruiter/stats") return handleRecruiterStats(req, res);
+    if (route === "resume-builder" || route.startsWith("resume-builder/")) return handleResumeBuilder(route, req, res);
 
     return sendError(res, 404, `Endpoint /api/${route} tidak ditemukan.`);
   } catch (error) {
