@@ -1,6 +1,10 @@
 import React from "react";
 
-export const Footer: React.FC = () => {
+interface FooterProps {
+  setActiveTab: (tab: string) => void;
+}
+
+export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
   return (
     <footer id="app-footer" className="bg-white border-t border-slate-100 py-6 text-slate-500 text-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -22,9 +26,9 @@ export const Footer: React.FC = () => {
 
         {/* Links */}
         <div className="flex items-center gap-6 text-slate-500">
-          <span className="hover:text-blue-600 cursor-pointer transition">Ketentuan</span>
-          <span className="hover:text-blue-600 cursor-pointer transition">Privasi</span>
-          <span className="hover:text-blue-600 cursor-pointer transition">Bantuan</span>
+          <button onClick={() => setActiveTab("ketentuan")} className="hover:text-blue-600 cursor-pointer transition">Ketentuan</button>
+          <button onClick={() => setActiveTab("privasi")} className="hover:text-blue-600 cursor-pointer transition">Privasi</button>
+          <button onClick={() => setActiveTab("bantuan")} className="hover:text-blue-600 cursor-pointer transition">Bantuan</button>
         </div>
       </div>
     </footer>

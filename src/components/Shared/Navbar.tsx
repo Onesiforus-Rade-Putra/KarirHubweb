@@ -69,7 +69,7 @@ const sellerNav: NavItem[] = [
   { label: "Jadwal", tab: "seller-schedule", icon: Calendar },
   { label: "Pendapatan", tab: "seller-earnings", icon: DollarSign },
   { label: "Profil", tab: "profil", icon: UserRound },
-  { label: "Pengaturan", tab: "profil", icon: Settings }
+  { label: "Pengaturan", tab: "settings", icon: Settings }
 ];
 
 const recruiterNav: NavItem[] = [
@@ -80,7 +80,7 @@ const recruiterNav: NavItem[] = [
   { label: "Talent Pool", tab: "recruiter-talent", icon: FileText },
   { label: "Premium", tab: "recruiter-upgrade", icon: Crown },
   { label: "Profil", tab: "profil", icon: UserRound },
-  { label: "Pengaturan", tab: "profil", icon: Settings }
+  { label: "Pengaturan", tab: "settings", icon: Settings }
 ];
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -91,6 +91,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout
 }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const isAuthenticated = Boolean(user);
   const effectiveRole: UserRole = isAuthenticated ? currentRole : "seeker";
   const navItems = !isAuthenticated
@@ -117,6 +118,10 @@ export const Navbar: React.FC<NavbarProps> = ({
     purple: "bg-purple-600 text-white hover:bg-purple-700",
     emerald: "bg-emerald-600 text-white hover:bg-emerald-700"
   }[accent];
+  const notifications =
+    currentRole === "seller"
+      ? ["Pesanan baru menunggu diproses.", "Jadwal konsultasi hari ini tersedia."]
+      : ["Ada pelamar baru untuk lowongan aktif.", "Talent Pool memiliki kandidat baru."];
 
   return (
     <nav className="sticky top-0 z-50 border-b border-slate-100 bg-white">
@@ -150,7 +155,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="hidden min-w-0 flex-1 items-center justify-end gap-2 md:flex">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.tab || (item.tab === "profil" && activeTab === "seller-settings");
+            const isActive = activeTab === item.tab;
             const cls = item.primary
               ? activeTab === item.tab
                 ? primaryClass
@@ -189,10 +194,43 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
 
           {isAuthenticated && (currentRole === "seller" || currentRole === "recruiter") && (
-            <button className="relative ml-2 rounded-full p-2 text-slate-600 hover:bg-slate-50">
-              <Bell className="h-5 w-5" />
-              <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-red-500" />
-            </button>
+            <div className="relative ml-2">
+              <button
+                onClick={() => setNotificationsOpen((open) => !open)}
+                className="relative rounded-full p-2 text-slate-600 hover:bg-slate-50"
+                aria-label="Buka notifikasi"
+                aria-expanded={notificationsOpen}
+              >
+                <Bell className="h-5 w-5" />
+                <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-red-500" />
+              </button>
+              {notificationsOpen && (
+                <div className="absolute right-0 top-12 w-80 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-xl">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <p className="text-sm font-black text-slate-950">Notifikasi</p>
+                    <button onClick={() => setNotificationsOpen(false)} className="rounded-md p-1 text-slate-400 hover:bg-slate-50 hover:text-slate-700">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {notifications.map((item) => (
+                      <button key={item} onClick={() => setNotificationsOpen(false)} className="w-full rounded-lg bg-slate-50 p-3 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100">
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveTab("settings");
+                      setNotificationsOpen(false);
+                    }}
+                    className="mt-3 w-full rounded-lg border border-slate-200 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Atur Notifikasi
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
           {isAuthenticated && (
