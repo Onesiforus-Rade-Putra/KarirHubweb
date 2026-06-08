@@ -245,3 +245,113 @@ export async function fetchResumeKeywordSuggestions(payload: { jobTitle?: string
     body: JSON.stringify(payload),
   });
 }
+
+export interface ProfileExperience {
+  id: string;
+  role: string;
+  company: string;
+  startDate?: string;
+  endDate?: string;
+  isCurrent?: boolean;
+  description?: string;
+}
+
+export interface ProfileEducation {
+  id: string;
+  school: string;
+  degree: string;
+  period?: string;
+}
+
+export interface ProfileCertification {
+  id: string;
+  name: string;
+  issuer: string;
+}
+
+export interface ProfileCvFile {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  fileType?: string;
+  downloadUrl?: string;
+  source: "supabase-storage" | "local-metadata";
+  createdAt: string;
+}
+
+export interface UserProfileSettings {
+  language: string;
+  region: string;
+  emailNotifications: boolean;
+  productNotifications: boolean;
+  paymentMethods: Array<{
+    id: string;
+    label: string;
+    detail: string;
+    primary?: boolean;
+  }>;
+}
+
+export interface UserProfilePayload {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    avatar?: string;
+    company?: string;
+  };
+  details: {
+    title: string;
+    location: string;
+    phone: string;
+    website: string;
+    about: string;
+  };
+  experiences: ProfileExperience[];
+  educations: ProfileEducation[];
+  certifications: ProfileCertification[];
+  skills: string[];
+  cvFiles: ProfileCvFile[];
+  settings: UserProfileSettings;
+}
+
+export async function fetchUserProfile() {
+  return apiRequest<{ profile: UserProfilePayload }>("/api/profile");
+}
+
+export async function updateUserProfile(payload: Partial<UserProfilePayload>) {
+  return apiRequest<{ profile: UserProfilePayload }>("/api/profile", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function saveCvMetadata(payload: {
+  fileName: string;
+  fileSize: number;
+  fileType?: string;
+  downloadUrl?: string;
+}) {
+  return apiRequest<{ cvFile: ProfileCvFile }>("/api/profile/cv", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCvMetadata(id: string) {
+  return apiRequest<{ ok: boolean }>(`/api/profile/cv?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchUserSettings() {
+  return apiRequest<{ settings: UserProfileSettings; user: UserProfilePayload["user"] }>("/api/settings");
+}
+
+export async function updateUserSettings(payload: Partial<UserProfileSettings>) {
+  return apiRequest<{ settings: UserProfileSettings }>("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
