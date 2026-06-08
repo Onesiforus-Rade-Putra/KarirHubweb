@@ -1,27 +1,16 @@
-import React, { useState } from "react";
-import { 
-  User, 
-  Mail, 
-  Globe, 
-  MapPin, 
-  Edit3, 
-  Check, 
-  Award, 
-  Plus, 
-  Trash2, 
-  Phone, 
-  Camera, 
-  GraduationCap, 
-  Briefcase, 
-  Bell, 
-  Lock, 
-  CreditCard, 
-  AlertTriangle, 
-  ChevronRight, 
-  FileText, 
-  Download,
-  X
-} from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { Award, Briefcase, Download, Edit3, FileText, GraduationCap, Loader2, MapPin, Plus, RefreshCw, Save, Trash2, Upload, X } from "lucide-react";
+import {
+  deleteCvMetadata,
+  fetchUserProfile,
+  ProfileCertification,
+  ProfileCvFile,
+  ProfileEducation,
+  ProfileExperience,
+  saveCvMetadata,
+  updateUserProfile,
+  UserProfilePayload
+} from "../../lib/karirHubApi";
 
 interface ProfileProps {
   currentUser: any;
@@ -29,1248 +18,582 @@ interface ProfileProps {
   toast: (msg: string, status?: string) => void;
 }
 
-interface WorkExp {
-  id: string;
-  role: string;
-  company: string;
-  date: string;
-  duration: string;
-  desc: string;
-}
+const emptyProfile = (currentUser: any): UserProfilePayload => ({
+  user: {
+    id: currentUser?.id || "local",
+    name: currentUser?.name || "Pengguna KarirHub",
+    email: currentUser?.email || "",
+    role: currentUser?.role || "seeker",
+    avatar: currentUser?.avatar,
+    company: currentUser?.company
+  },
+  details: {
+    title: "",
+    location: "",
+    phone: "",
+    website: "",
+    about: ""
+  },
+  experiences: [],
+  educations: [],
+  certifications: [],
+  skills: [],
+  cvFiles: [],
+  settings: {
+    language: "id",
+    region: "ID",
+    emailNotifications: true,
+    productNotifications: false,
+    paymentMethods: []
+  }
+});
 
-interface Education {
-  id: string;
-  school: string;
-  degree: string;
-  date: string;
-}
+const cvStorageKey = (userId: string, cvId: string) => `karirhub_cv_file_${userId}_${cvId}`;
+const localCvListKey = (userId: string) => `karirhub_cv_metadata_${userId}`;
 
-interface Certification {
-  id: string;
-  name: string;
-  issuer: string;
-}
+const formatSize = (size: number) => {
+  if (!size) return "Ukuran tidak tersedia";
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+};
 
-export const UserProfile: React.FC<ProfileProps> = ({
-  currentUser,
-  onUpdateName,
-  toast
-}) => {
-  // Main static/dynamic info
-  const [name, setName] = useState(currentUser?.name || "John Doe");
-  const [title, setTitle] = useState("Software Engineer");
-  const [location, setLocation] = useState("Jakarta, Indonesia");
-  const [email, setEmail] = useState("john.doe@email.com");
-  const [phone, setPhone] = useState("+62 812 3456 7890");
-  const [website, setWebsite] = useState("linkedin.com/in/johndoe");
-  const [about, setAbout] = useState(
-    "Passionate software engineer dengan 5 tahun pengalaman dalam pengembangan web aplikasi. Memiliki keahlian dalam React, Node.js, dan cloud computing. Saya senang memecahkan masalah kompleks dan membuat solusi yang scalable dan user-friendly."
+const SectionCard = ({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) => (
+  <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div className="mb-5 flex items-center justify-between gap-4 border-b border-slate-100 pb-4">
+      <h2 className="text-sm font-black uppercase tracking-wider text-slate-900">{title}</h2>
+      {action}
+    </div>
+    {children}
+  </section>
+);
+
+const TextInput = ({ label, value, onChange, placeholder, required }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; required?: boolean }) => (
+  <label className="block">
+    <span className="mb-1 block text-xs font-bold text-slate-500">{label}</span>
+    <input
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      required={required}
+      placeholder={placeholder}
+      className="h-11 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500"
+    />
+  </label>
+);
+
+export const UserProfile: React.FC<ProfileProps> = ({ currentUser, onUpdateName, toast }) => {
+  const [profile, setProfile] = useState<UserProfilePayload>(() => emptyProfile(currentUser));
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState(emptyProfile(currentUser));
+  const [experienceForm, setExperienceForm] = useState<ProfileExperience | null>(null);
+  const [educationForm, setEducationForm] = useState<ProfileEducation | null>(null);
+  const [certificationForm, setCertificationForm] = useState<ProfileCertification | null>(null);
+  const [skillInput, setSkillInput] = useState("");
+  const [isUploadingCv, setIsUploadingCv] = useState(false);
+  const userId = profile.user.id || currentUser?.id || "local";
+
+  const initials = useMemo(
+    () =>
+      (profile.user.name || "KH")
+        .split(" ")
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase(),
+    [profile.user.name]
   );
 
-  // States
-  const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
-  const [isAddExpModalOpen, setIsAddExpModalOpen] = useState(false);
-  const [isAddEduModalOpen, setIsAddEduModalOpen] = useState(false);
-  const [isAddCertModalOpen, setIsAddCertModalOpen] = useState(false);
-  
-  // Settings Modals
-  const [isPassModalOpen, setIsPassModalOpen] = useState(false);
-  const [isPayModalOpen, setIsPayModalOpen] = useState(false);
-  const [isDeleteAccModalOpen, setIsDeleteAccModalOpen] = useState(false);
-
-  // Current listings data
-  const [experiences, setExperiences] = useState<WorkExp[]>([
-    {
-      id: "1",
-      role: "Senior Software Engineer",
-      company: "PT Teknologi Maju Bersama",
-      date: "Jan 2022 - Sekarang",
-      duration: "3 tahun 4 bulan",
-      desc: "Memimpin tim dalam pengembangan platform e-commerce dengan jutaan pengguna aktif. Mengimplementasikan microservices architecture dan meningkatkan performa aplikasi 40%."
-    },
-    {
-      id: "2",
-      role: "Software Engineer",
-      company: "Startup Indonesia",
-      date: "Mar 2020 - Des 2021",
-      duration: "1 tahun 10 bulan",
-      desc: "Mengembangkan fitur-fitur baru untuk aplikasi mobile dan web. Bekerja dengan React, Node.js, dan PostgreSQL."
-    }
-  ]);
-
-  const [educations, setEducations] = useState<Education[]>([
-    {
-      id: "1",
-      school: "Universitas Indonesia",
-      degree: "S1 Ilmu Komputer",
-      date: "2016 - 2020"
-    }
-  ]);
-
-  const [certifications, setCertifications] = useState<Certification[]>([
-    {
-      id: "1",
-      name: "AWS Certified Developer",
-      issuer: "Amazon Web Services"
-    },
-    {
-      id: "2",
-      name: "Professional Scrum Master",
-      issuer: "Scrum.org"
-    }
-  ]);
-
-  const [skills, setSkills] = useState<string[]>([
-    "React", "Node.js", "TypeScript", "JavaScript", "Python", 
-    "PostgreSQL", "MongoDB", "AWS", "Docker", "Git", "REST API", "GraphQL"
-  ]);
-
-  const [skillsInput, setSkillsInput] = useState("");
-  const [isEditingSkills, setIsEditingSkills] = useState(false);
-
-  // Stats Counters
-  const [stats, setStats] = useState({
-    views: 245,
-    applied: 12,
-    interviews: 5
-  });
-
-  // CV Files State
-  const [cvFile, setCvFile] = useState<{ name: string; size: string } | null>({
-    name: "CV_John_Doe_Software_Engineer.pdf",
-    size: "2.4 MB"
-  });
-
-  // Toggle Switches State
-  const [notificationToggle, setNotificationToggle] = useState(true);
-
-  // Modal Temp states
-  const [tempProfile, setTempProfile] = useState({
-    name, title, location, email, phone, website, about
-  });
-  const [tempExp, setTempExp] = useState({
-    role: "", company: "", startDate: "", endDate: "", isCurrent: false, desc: ""
-  });
-  const [tempEdu, setTempEdu] = useState({
-    school: "", degree: "", date: ""
-  });
-  const [tempCert, setTempCert] = useState({
-    name: "", issuer: ""
-  });
-  const [tempPass, setTempPass] = useState({
-    oldPass: "", newPass: "", confirmPass: ""
-  });
-
-  // Action methods
-  const openEditProfile = () => {
-    setTempProfile({ name, title, location, email, phone, website, about });
-    setIsEditProfileModalOpen(true);
-  };
-
-  const handleSaveProfile = (e: React.FormEvent) => {
-    e.preventDefault();
-    setName(tempProfile.name);
-    setTitle(tempProfile.title);
-    setLocation(tempProfile.location);
-    setEmail(tempProfile.email);
-    setPhone(tempProfile.phone);
-    setWebsite(tempProfile.website);
-    setAbout(tempProfile.about);
-    onUpdateName(tempProfile.name);
-    setIsEditProfileModalOpen(false);
-    toast("Perubahan data profil berhasil diperbarui!", "success");
-  };
-
-  const handleCreateExp = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tempExp.role || !tempExp.company) return;
-    const dateRange = `${tempExp.startDate} - ${tempExp.isCurrent ? "Sekarang" : tempExp.endDate}`;
-    
-    const newEntry: WorkExp = {
-      id: Date.now().toString(),
-      role: tempExp.role,
-      company: tempExp.company,
-      date: dateRange,
-      duration: tempExp.isCurrent ? "Masa Kini" : "Selesai",
-      desc: tempExp.desc
-    };
-
-    setExperiences([newEntry, ...experiences]);
-    setTempExp({ role: "", company: "", startDate: "", endDate: "", isCurrent: false, desc: "" });
-    setIsAddExpModalOpen(false);
-    toast("Pengalaman kerja berhasil ditambahkan!", "success");
-  };
-
-  const handleDeleteExp = (id: string) => {
-    setExperiences(experiences.filter(exp => exp.id !== id));
-    toast("Pengalaman kerja berhasil dihapus.", "info");
-  };
-
-  const handleCreateEdu = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tempEdu.school || !tempEdu.degree) return;
-    const newEntry: Education = {
-      id: Date.now().toString(),
-      school: tempEdu.school,
-      degree: tempEdu.degree,
-      date: tempEdu.date || "Tahun Tidak Ditandai"
-    };
-    setEducations([...educations, newEntry]);
-    setTempEdu({ school: "", degree: "", date: "" });
-    setIsAddEduModalOpen(false);
-    toast("Riwayat pendidikan berhasil ditambahkan!", "success");
-  };
-
-  const handleDeleteEdu = (id: string) => {
-    setEducations(educations.filter(edu => edu.id !== id));
-    toast("Riwayat pendidikan berhasil dihapus.", "info");
-  };
-
-  const handleCreateCert = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tempCert.name || !tempCert.issuer) return;
-    const newEntry: Certification = {
-      id: Date.now().toString(),
-      name: tempCert.name,
-      issuer: tempCert.issuer
-    };
-    setCertifications([...certifications, newEntry]);
-    setTempCert({ name: "", issuer: "" });
-    setIsAddCertModalOpen(false);
-    toast("Sertifikasi karir berhasil ditambahkan!", "success");
-  };
-
-  const handleDeleteCert = (id: string) => {
-    setCertifications(certifications.filter(c => c.id !== id));
-    toast("Sertifikasi berhasil dihapus.", "info");
-  };
-
-  const handleSkillsAddSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!skillsInput.trim()) return;
-    if (skills.includes(skillsInput.trim())) {
-      setSkillsInput("");
-      return;
-    }
-    setSkills([...skills, skillsInput.trim()]);
-    setSkillsInput("");
-  };
-
-  const handleRemoveSkill = (term: string) => {
-    setSkills(skills.filter(s => s !== term));
-  };
-
-  const handleSimulateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const sizeStr = (file.size / (1024 * 1024)).toFixed(1) + " MB";
-      setCvFile({
-        name: file.name,
-        size: sizeStr
+  const loadProfile = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const { profile: loaded } = await fetchUserProfile();
+      const localCv = readLocalCvMetadata(loaded.user.id);
+      const mergedCv = [...loaded.cvFiles];
+      localCv.forEach((item) => {
+        if (!mergedCv.some((existing) => existing.id === item.id)) mergedCv.push(item);
       });
-      toast("CV terbaru berhasil diunggah!", "success");
+      setProfile({ ...loaded, cvFiles: mergedCv });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal memuat profil.");
+      setProfile((prev) => ({ ...prev, cvFiles: readLocalCvMetadata(prev.user.id) }));
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handlePasswordChangeSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tempPass.newPass || tempPass.newPass !== tempPass.confirmPass) {
-      toast("Konfirmasi password baru tidak cocok!", "error");
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  const readLocalCvMetadata = (id: string): ProfileCvFile[] => {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(localCvListKey(id)) || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const writeLocalCvMetadata = (id: string, files: ProfileCvFile[]) => {
+    window.localStorage.setItem(localCvListKey(id), JSON.stringify(files.filter((item) => item.id.startsWith("local-"))));
+  };
+
+  const persistProfile = async (next: UserProfilePayload, successMessage: string) => {
+    setIsSaving(true);
+    setError("");
+    try {
+      const { profile: saved } = await updateUserProfile(next);
+      const localCv = readLocalCvMetadata(saved.user.id);
+      setProfile({ ...saved, cvFiles: [...saved.cvFiles, ...localCv.filter((item) => !saved.cvFiles.some((cv) => cv.id === item.id))] });
+      onUpdateName(saved.user.name);
+      toast(successMessage, "success");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menyimpan profil.");
+      toast(err instanceof Error ? err.message : "Gagal menyimpan profil.", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const openProfileEditor = () => {
+    setProfileForm(profile);
+    setIsEditingProfile(true);
+  };
+
+  const submitProfile = (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsEditingProfile(false);
+    persistProfile(profileForm, "Profil berhasil disimpan.");
+  };
+
+  const upsertExperience = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!experienceForm) return;
+    const exists = profile.experiences.some((item) => item.id === experienceForm.id);
+    const next = {
+      ...profile,
+      experiences: exists
+        ? profile.experiences.map((item) => (item.id === experienceForm.id ? experienceForm : item))
+        : [{ ...experienceForm, id: `local-${Date.now()}` }, ...profile.experiences]
+    };
+    setExperienceForm(null);
+    persistProfile(next, "Pengalaman berhasil disimpan.");
+  };
+
+  const upsertEducation = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!educationForm) return;
+    const exists = profile.educations.some((item) => item.id === educationForm.id);
+    const next = {
+      ...profile,
+      educations: exists
+        ? profile.educations.map((item) => (item.id === educationForm.id ? educationForm : item))
+        : [{ ...educationForm, id: `local-${Date.now()}` }, ...profile.educations]
+    };
+    setEducationForm(null);
+    persistProfile(next, "Pendidikan berhasil disimpan.");
+  };
+
+  const upsertCertification = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!certificationForm) return;
+    const exists = profile.certifications.some((item) => item.id === certificationForm.id);
+    const next = {
+      ...profile,
+      certifications: exists
+        ? profile.certifications.map((item) => (item.id === certificationForm.id ? certificationForm : item))
+        : [{ ...certificationForm, id: `local-${Date.now()}` }, ...profile.certifications]
+    };
+    setCertificationForm(null);
+    persistProfile(next, "Sertifikasi berhasil disimpan.");
+  };
+
+  const deleteItem = (type: "experiences" | "educations" | "certifications", id: string) => {
+    const next = { ...profile, [type]: profile[type].filter((item: any) => item.id !== id) };
+    persistProfile(next as UserProfilePayload, "Data berhasil dihapus.");
+  };
+
+  const addSkill = (event: React.FormEvent) => {
+    event.preventDefault();
+    const skill = skillInput.trim();
+    if (!skill || profile.skills.includes(skill)) {
+      setSkillInput("");
       return;
     }
-    setIsPassModalOpen(false);
-    setTempPass({ oldPass: "", newPass: "", confirmPass: "" });
-    toast("Kata sandi berhasil diperbarui secara aman!", "success");
+    setSkillInput("");
+    persistProfile({ ...profile, skills: [...profile.skills, skill] }, "Skill berhasil ditambahkan.");
   };
+
+  const removeSkill = (skill: string) => {
+    persistProfile({ ...profile, skills: profile.skills.filter((item) => item !== skill) }, "Skill berhasil dihapus.");
+  };
+
+  const uploadCv = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword"].includes(file.type)) {
+      toast("Format CV harus PDF atau DOC/DOCX.", "error");
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      toast("Fallback lokal dibatasi 4MB sampai Supabase Storage disiapkan.", "error");
+      return;
+    }
+
+    setIsUploadingCv(true);
+    try {
+      const { cvFile } = await saveCvMetadata({ fileName: file.name, fileSize: file.size, fileType: file.type });
+      await storeCvLocally(file, cvFile.id, profile.user.id);
+      setProfile((prev) => ({ ...prev, cvFiles: [cvFile, ...prev.cvFiles] }));
+      toast("Metadata CV tersimpan. File disimpan lokal sampai Supabase Storage disiapkan.", "success");
+    } catch {
+      const localCv: ProfileCvFile = {
+        id: `local-${Date.now()}`,
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        source: "local-metadata",
+        createdAt: new Date().toISOString()
+      };
+      await storeCvLocally(file, localCv.id, profile.user.id);
+      const nextFiles = [localCv, ...profile.cvFiles];
+      writeLocalCvMetadata(profile.user.id, nextFiles);
+      setProfile((prev) => ({ ...prev, cvFiles: nextFiles }));
+      toast("API CV belum siap. CV disimpan lokal di browser sebagai fallback aman.", "info");
+    } finally {
+      setIsUploadingCv(false);
+      event.target.value = "";
+    }
+  };
+
+  const storeCvLocally = (file: File, cvId: string, id: string) =>
+    new Promise<void>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          window.localStorage.setItem(cvStorageKey(id, cvId), String(reader.result || ""));
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+  const downloadCv = (cv: ProfileCvFile) => {
+    if (cv.downloadUrl) {
+      window.open(cv.downloadUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    const dataUrl = window.localStorage.getItem(cvStorageKey(profile.user.id, cv.id));
+    if (!dataUrl) {
+      const fallback = new Blob(
+        [
+          `CV metadata KarirHub\n\nNama file: ${cv.fileName}\nUkuran: ${formatSize(cv.fileSize)}\nSumber: ${cv.source}\n\nFile asli tidak tersedia di browser ini karena Supabase Storage belum dikonfigurasi.`
+        ],
+        { type: "text/plain" }
+      );
+      const fallbackUrl = URL.createObjectURL(fallback);
+      const fallbackAnchor = document.createElement("a");
+      fallbackAnchor.href = fallbackUrl;
+      fallbackAnchor.download = `${cv.fileName}.metadata.txt`;
+      fallbackAnchor.click();
+      URL.revokeObjectURL(fallbackUrl);
+      toast("File asli tidak tersedia di browser ini. Metadata CV diunduh sebagai fallback.", "info");
+      return;
+    }
+    const anchor = document.createElement("a");
+    anchor.href = dataUrl;
+    anchor.download = cv.fileName;
+    anchor.click();
+  };
+
+  const deleteCv = async (cv: ProfileCvFile) => {
+    try {
+      if (!cv.id.startsWith("local-")) await deleteCvMetadata(cv.id);
+    } catch {
+      toast("Metadata CV di server gagal dihapus, menghapus tampilan lokal.", "info");
+    }
+    window.localStorage.removeItem(cvStorageKey(profile.user.id, cv.id));
+    const nextFiles = profile.cvFiles.filter((item) => item.id !== cv.id);
+    writeLocalCvMetadata(profile.user.id, nextFiles);
+    setProfile((prev) => ({ ...prev, cvFiles: nextFiles }));
+  };
+
+  if (isLoading) {
+    return (
+      <div className="mx-auto flex max-w-4xl items-center justify-center px-6 py-24 text-slate-600">
+        <Loader2 className="mr-3 h-5 w-5 animate-spin" />
+        Memuat profil dari database...
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-      {/* Visual Header Overlapping Card */}
-      <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm mb-8 flex flex-col">
-        {/* Banner area */}
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-700 h-36 w-full relative">
-          <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-white/10 rounded-full blur-2xl"></div>
-          <div className="absolute bottom-4 left-6 hidden md:block">
-            <span className="text-[10px] font-black uppercase tracking-widest bg-white/20 text-white backdrop-blur-md px-3 py-1 rounded-full border border-white/10">
-              Profil Terverifikasi ATS
-            </span>
-          </div>
+    <div className="mx-auto max-w-7xl px-6 py-8 text-left text-slate-950">
+      {error && (
+        <div className="mb-5 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+          <span>{error}</span>
+          <button onClick={loadProfile} className="inline-flex items-center gap-1 text-amber-900">
+            <RefreshCw className="h-4 w-4" />
+            Coba lagi
+          </button>
         </div>
+      )}
 
-        {/* Info area */}
-        <div className="relative px-6 pb-6 pt-0 flex flex-col md:flex-row md:items-end justify-between gap-6 -mt-16 z-10">
-          <div className="flex flex-col md:flex-row items-center md:items-end gap-6 text-center md:text-left">
-            {/* Avatar block with active hover edit option */}
-            <div className="w-28 h-28 rounded-full border-4 border-white bg-slate-900 text-white flex items-center justify-center relative overflow-hidden shadow-md flex-shrink-0">
-              <span className="text-3xl font-extrabold tracking-tight select-none">
-                {name.split(" ").map(w => w[0]).join("").substring(0, 2).toUpperCase()}
-              </span>
-              <button 
-                onClick={openEditProfile}
-                className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition duration-150 flex items-center justify-center cursor-pointer"
-                title="Ganti Foto Profil"
-              >
-                <Camera className="w-5 h-5 text-white" />
-              </button>
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="h-28 bg-blue-600" />
+        <div className="-mt-12 flex flex-col gap-5 px-6 pb-6 md:flex-row md:items-end md:justify-between">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end">
+            <div className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-white bg-slate-900 text-3xl font-black text-white shadow">
+              {initials}
             </div>
-
-            <div className="space-y-2 flex-grow">
-              <div>
-                <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none flex items-center justify-center md:justify-start gap-2">
-                  {name}
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" title="Aktif mencari kerja"></span>
-                </h1>
-                <p className="text-sm font-bold text-blue-600 mt-1 uppercase tracking-wider">{title}</p>
-              </div>
-
-              {/* Direct Meta List */}
-              <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-4 gap-y-2 text-xs text-slate-400 font-bold">
-                <span className="flex items-center gap-1.5 leading-none">
-                  <MapPin className=" some-space w-3.5 h-3.5 text-slate-350" /> {location}
-                </span>
-                <span className="flex items-center gap-1.5 leading-none">
-                  <Mail className=" w-3.5 h-3.5 text-slate-350" /> {email}
-                </span>
-                <span className="flex items-center gap-1.5 leading-none">
-                  <Phone className=" w-3.5 h-3.5 text-slate-350" /> {phone}
-                </span>
-                <span className="flex items-center gap-1.5 leading-none">
-                  <Globe className=" w-3.5 h-3.5 text-slate-350" /> {website}
-                </span>
+            <div>
+              <h1 className="text-3xl font-black">{profile.user.name}</h1>
+              <p className="mt-1 font-bold text-blue-600">{profile.details.title || "Tambahkan headline karir"}</p>
+              <div className="mt-3 flex flex-wrap gap-3 text-sm font-semibold text-slate-500">
+                <span>{profile.user.email}</span>
+                {profile.details.location && <span className="inline-flex items-center gap-1"><MapPin className="h-4 w-4" />{profile.details.location}</span>}
               </div>
             </div>
           </div>
-
-          {/* Action on absolute far right */}
-          <button 
-            type="button"
-            onClick={openEditProfile}
-            className="w-full md:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition duration-155 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-blue-100 uppercase tracking-wider"
-          >
-            <Edit3 className="w-4 h-4" />
+          <button onClick={openProfileEditor} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 font-semibold text-white hover:bg-blue-700">
+            <Edit3 className="h-4 w-4" />
             Edit Profil
           </button>
         </div>
-      </div>
+      </section>
 
-      {/* Grid view main split panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 text-left items-start">
-        {/* Left column info items (Spans 8) */}
-        <div className="lg:col-span-8 space-y-6">
-          
-          {/* Tentang Card */}
-          <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-xs relative">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-black text-slate-900 tracking-tight uppercase tracking-widest text-xs">
-                Tentang
-              </h2>
-              <button 
-                onClick={openEditProfile} 
-                className="text-xs text-blue-600 font-bold hover:underline"
-              >
-                Edit
-              </button>
-            </div>
-            <p className="text-sm text-slate-500 font-medium leading-relaxed">
-              {about}
-            </p>
-          </div>
-
-          {/* Pengalaman Kerja Card */}
-          <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-xs">
-            <div className="flex justify-between items-center border-b pb-3 mb-6">
-              <h2 className="text-lg font-black text-slate-900 uppercase tracking-widest text-xs">
-                Pengalaman Kerja
-              </h2>
-              <button
-                onClick={() => setIsAddExpModalOpen(true)}
-                className="px-3.5 py-1.5 text-xs font-bold text-blue-605 bg-blue-50 hover:bg-blue-100 border border-blue-100 rounded-xl transition flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" /> Tambah
-              </button>
-            </div>
-
-            {experiences.length === 0 ? (
-              <div className="text-center py-6 text-slate-400">
-                <Briefcase className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm font-semibold">Belum ada pengalaman kerja terdaftar.</p>
-              </div>
+      <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-6">
+          <SectionCard title="Informasi Pribadi">
+            {profile.details.about ? (
+              <p className="text-sm leading-7 text-slate-600">{profile.details.about}</p>
             ) : (
-              <div className="space-y-6 divide-y divide-slate-100">
-                {experiences.map((exp, idx) => (
-                  <div key={exp.id} className={`flex gap-4 text-left ${idx > 0 ? "pt-5" : ""}`}>
-                    {/* Visual box left */}
-                    <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0">
-                      <Briefcase className="w-5 h-5 stroke-[1.8]" />
-                    </div>
-
-                    {/* text contents right */}
-                    <div className="flex-grow space-y-1">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="text-sm font-extrabold text-slate-900 leading-snug">
-                            {exp.role}
-                          </h3>
-                          <p className="text-xs font-bold text-slate-500">
-                            {exp.company}
-                          </p>
-                        </div>
-
-                        {/* Delete capability */}
-                        <button
-                          onClick={() => handleDeleteExp(exp.id)}
-                          className="p-1.5 text-slate-350 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
-                          title="Hapus Pengalaman"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider leading-none pt-0.5">
-                        {exp.date} {exp.duration && `· ${exp.duration}`}
-                      </p>
-
-                      {exp.desc && (
-                        <p className="text-xs text-slate-500 font-medium leading-relaxed pt-1 whitespace-pre-wrap">
-                          {exp.desc}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <p className="rounded-xl border border-dashed border-slate-200 p-5 text-sm font-semibold text-slate-400">Belum ada ringkasan profil.</p>
             )}
-          </div>
-
-          {/* Pendidikan Card */}
-          <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-xs">
-            <div className="flex justify-between items-center border-b pb-3 mb-6">
-              <h2 className="text-lg font-black text-slate-900 uppercase tracking-widest text-xs">
-                Pendidikan
-              </h2>
-              <button
-                onClick={() => setIsAddEduModalOpen(true)}
-                className="px-3.5 py-1.5 text-xs font-bold text-blue-605 bg-blue-50 hover:bg-blue-100 border border-blue-100 rounded-xl transition flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-4 h-4" /> Tambah
-              </button>
+            <div className="mt-5 grid gap-4 text-sm md:grid-cols-3">
+              <InfoLabel label="Telepon" value={profile.details.phone || "-"} />
+              <InfoLabel label="Website" value={profile.details.website || "-"} />
+              <InfoLabel label="Lokasi" value={profile.details.location || "-"} />
             </div>
+          </SectionCard>
 
-            {educations.length === 0 ? (
-              <div className="text-center py-6 text-slate-400">
-                <GraduationCap className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                <p className="text-sm font-semibold">Belum ada riwayat pendidikan terdaftar.</p>
-              </div>
-            ) : (
-              <div className="space-y-6 divide-y divide-slate-100">
-                {educations.map((edu, idx) => (
-                  <div key={edu.id} className={`flex gap-4 text-left ${idx > 0 ? "pt-5" : ""}`}>
-                    {/* Visual box left */}
-                    <div className="w-12 h-12 rounded-2xl bg-purple-50 border border-purple-100 text-purple-600 flex items-center justify-center flex-shrink-0">
-                      <GraduationCap className="w-5 h-5 stroke-[1.8]" />
-                    </div>
-
-                    {/* text contents right */}
-                    <div className="flex-grow space-y-1">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="text-sm font-extrabold text-slate-900 leading-snug">
-                            {edu.school}
-                          </h3>
-                          <p className="text-xs font-bold text-slate-500">
-                            {edu.degree}
-                          </p>
-                        </div>
-
-                        {/* Delete capability */}
-                        <button
-                          onClick={() => handleDeleteEdu(edu.id)}
-                          className="p-1.5 text-slate-355 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
-                          title="Hapus Pendidikan"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      <p className="text-[11px] text-slate-400 font-bold uppercase tracking-wider leading-none">
-                        Tahun Kelulusan: {edu.date}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <SectionCard
+            title="Pengalaman"
+            action={<SmallAction onClick={() => setExperienceForm({ id: "", role: "", company: "", startDate: "", endDate: "", isCurrent: false, description: "" })} label="Tambah" />}
+          >
+            {experienceForm && (
+              <ProfileForm onSubmit={upsertExperience} onCancel={() => setExperienceForm(null)}>
+                <TextInput label="Role" value={experienceForm.role} onChange={(value) => setExperienceForm({ ...experienceForm, role: value })} required />
+                <TextInput label="Perusahaan" value={experienceForm.company} onChange={(value) => setExperienceForm({ ...experienceForm, company: value })} required />
+                <TextInput label="Mulai" value={experienceForm.startDate || ""} onChange={(value) => setExperienceForm({ ...experienceForm, startDate: value })} placeholder="Jan 2024" />
+                <TextInput label="Selesai" value={experienceForm.endDate || ""} onChange={(value) => setExperienceForm({ ...experienceForm, endDate: value })} placeholder="Sekarang / Des 2025" />
+                <label className="md:col-span-2">
+                  <span className="mb-1 block text-xs font-bold text-slate-500">Deskripsi</span>
+                  <textarea value={experienceForm.description || ""} onChange={(event) => setExperienceForm({ ...experienceForm, description: event.target.value })} rows={3} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" />
+                </label>
+              </ProfileForm>
             )}
-          </div>
-
-          {/* Keahlian Card */}
-          <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-xs">
-            <div className="flex justify-between items-center border-b pb-3 mb-4">
-              <h2 className="text-lg font-black text-slate-900 uppercase tracking-widest text-xs">
-                Keahlian
-              </h2>
-              <button
-                onClick={() => setIsEditingSkills(!isEditingSkills)}
-                className="text-xs text-blue-600 font-bold hover:underline"
-              >
-                {isEditingSkills ? "Selesai" : "Edit"}
-              </button>
-            </div>
-
-            {/* Editable inline fields */}
-            {isEditingSkills && (
-              <form onSubmit={handleSkillsAddSubmit} className="flex gap-2 mb-4">
-                <input
-                  type="text"
-                  placeholder="Ketik keahlian baru..."
-                  value={skillsInput}
-                  onChange={(e) => setSkillsInput(e.target.value)}
-                  className="flex-1 text-xs border border-slate-200 p-2 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-500 bg-slate-50/50"
-                />
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-slate-900 text-white font-bold rounded-xl text-xs hover:bg-slate-800"
-                >
-                  Tambah Tag
-                </button>
-              </form>
-            )}
-
-            {/* Tags area */}
-            <div className="flex flex-wrap gap-2 pt-2">
-              {skills.map((sk) => (
-                <span
-                  key={sk}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold bg-blue-50 text-blue-600 border border-blue-100/40 rounded-xl px-3.5 py-2 hover:bg-blue-105/10 transition select-none"
-                >
-                  {sk}
-                  {isEditingSkills && (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveSkill(sk)}
-                      className="text-blue-400 hover:text-red-500 font-bold leading-none"
-                    >
-                      ×
-                    </button>
-                  )}
-                </span>
+            <ListEmpty visible={profile.experiences.length === 0} label="Belum ada pengalaman kerja." />
+            <div className="space-y-4">
+              {profile.experiences.map((item) => (
+                <ListItem key={item.id} icon={Briefcase} title={item.role} subtitle={`${item.company} - ${[item.startDate, item.isCurrent ? "Sekarang" : item.endDate].filter(Boolean).join(" - ")}`} body={item.description} onEdit={() => setExperienceForm(item)} onDelete={() => deleteItem("experiences", item.id)} />
               ))}
             </div>
-          </div>
+          </SectionCard>
 
-          {/* Pengaturan Card */}
-          <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-xs space-y-4">
-            <h2 className="text-lg font-black text-slate-900 uppercase tracking-widest text-xs border-b pb-3 mb-4">
-              Pengaturan
-            </h2>
-
-            {/* Vertically stacked list */}
+          <SectionCard
+            title="Pendidikan"
+            action={<SmallAction onClick={() => setEducationForm({ id: "", school: "", degree: "", period: "" })} label="Tambah" />}
+          >
+            {educationForm && (
+              <ProfileForm onSubmit={upsertEducation} onCancel={() => setEducationForm(null)}>
+                <TextInput label="Sekolah / Universitas" value={educationForm.school} onChange={(value) => setEducationForm({ ...educationForm, school: value })} required />
+                <TextInput label="Gelar / Jurusan" value={educationForm.degree} onChange={(value) => setEducationForm({ ...educationForm, degree: value })} required />
+                <TextInput label="Periode" value={educationForm.period || ""} onChange={(value) => setEducationForm({ ...educationForm, period: value })} placeholder="2018 - 2022" />
+              </ProfileForm>
+            )}
+            <ListEmpty visible={profile.educations.length === 0} label="Belum ada riwayat pendidikan." />
             <div className="space-y-4">
-              {/* Notifikasi */}
-              <div className="flex items-center justify-between p-3.5 rounded-2xl border border-slate-100 bg-slate-50/20 hover:bg-slate-50/50 transition">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                    <Bell className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">Notifikasi Akun</h4>
-                    <p className="text-xs text-slate-400">Kelola preferensi notifikasi</p>
-                  </div>
-                </div>
-
-                {/* Simulated CSS Switch */}
-                <button
-                  onClick={() => {
-                    setNotificationToggle(!notificationToggle);
-                    toast(`Preferensi notifikasi ${!notificationToggle ? "diaktifkan" : "dinonaktifkan"}.`, "info");
-                  }}
-                  className={`w-11 h-6 rounded-full p-0.5 transition duration-200 cursor-pointer ${
-                    notificationToggle ? "bg-blue-600" : "bg-slate-300"
-                  }`}
-                >
-                  <div className={`bg-white w-5 h-5 rounded-full shadow-md transform transition duration-200 ${
-                    notificationToggle ? "translate-x-5" : "translate-x-0"
-                  }`} />
-                </button>
-              </div>
-
-              {/* Ubah Password */}
-              <div 
-                onClick={() => setIsPassModalOpen(true)}
-                className="flex items-center justify-between p-3.5 rounded-2xl border border-slate-100 bg-slate-50/20 hover:bg-slate-50/50 transition cursor-pointer"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
-                    <Lock className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">Ubah Password</h4>
-                    <p className="text-xs text-slate-400">Update password akun Anda</p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-350" />
-              </div>
-
-              {/* Metode Pembayaran */}
-              <div 
-                onClick={() => setIsPayModalOpen(true)}
-                className="flex items-center justify-between p-3.5 rounded-2xl border border-slate-100 bg-slate-50/20 hover:bg-slate-50/50 transition cursor-pointer"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-                    <CreditCard className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-900">Metode Pembayaran</h4>
-                    <p className="text-xs text-slate-400">Kelola kartu kredit atau e-wallet dompet belanja</p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-350" />
-              </div>
-
-              {/* Hapus Akun */}
-              <div 
-                onClick={() => setIsDeleteAccModalOpen(true)}
-                className="flex items-center justify-between p-3.5 rounded-2xl border border-rose-100 bg-rose-50/10 hover:bg-rose-55 hover:bg-rose-50/35 transition cursor-pointer"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
-                    <Trash2 className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-red-700">Hapus Akun Anda</h4>
-                    <p className="text-xs text-slate-400">Hapus akun secara permanen</p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-350" />
-              </div>
+              {profile.educations.map((item) => (
+                <ListItem key={item.id} icon={GraduationCap} title={item.school} subtitle={item.degree} body={item.period} onEdit={() => setEducationForm(item)} onDelete={() => deleteItem("educations", item.id)} />
+              ))}
             </div>
-          </div>
+          </SectionCard>
 
+          <SectionCard
+            title="Sertifikasi"
+            action={<SmallAction onClick={() => setCertificationForm({ id: "", name: "", issuer: "" })} label="Tambah" />}
+          >
+            {certificationForm && (
+              <ProfileForm onSubmit={upsertCertification} onCancel={() => setCertificationForm(null)}>
+                <TextInput label="Nama Sertifikasi" value={certificationForm.name} onChange={(value) => setCertificationForm({ ...certificationForm, name: value })} required />
+                <TextInput label="Issuer" value={certificationForm.issuer} onChange={(value) => setCertificationForm({ ...certificationForm, issuer: value })} required />
+              </ProfileForm>
+            )}
+            <ListEmpty visible={profile.certifications.length === 0} label="Belum ada sertifikasi." />
+            <div className="space-y-4">
+              {profile.certifications.map((item) => (
+                <ListItem key={item.id} icon={Award} title={item.name} subtitle={item.issuer} onEdit={() => setCertificationForm(item)} onDelete={() => deleteItem("certifications", item.id)} />
+              ))}
+            </div>
+          </SectionCard>
         </div>
 
-        {/* Right Sidebar panels (Spans 4) */}
-        <div className="lg:col-span-4 space-y-6">
-
-          {/* Statistik Profil Card */}
-          <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs">
-            <h3 className="font-bold text-slate-400 uppercase tracking-widest text-[10px] pb-2 border-b border-slate-100 mb-4 text-left">
-              Statistik Profil
-            </h3>
-
-            <div className="space-y-4">
-              <div className="flex justify-between items-center text-sm font-bold">
-                <span className="text-slate-500">Profil dilihat</span>
-                <span className="text-slate-900 text-base">{stats.views} kali</span>
-              </div>
-              <div className="flex justify-between items-center text-sm font-bold">
-                <span className="text-slate-500">Lamaran dikirim</span>
-                <span className="text-slate-900 text-base">{stats.applied} dokumen</span>
-              </div>
-              <div className="flex justify-between items-center text-sm font-bold">
-                <span className="text-slate-500">Undangan interview</span>
-                <span className="text-slate-900 text-base text-blue-600">{stats.interviews} tawaran</span>
-              </div>
-            </div>
-          </div>
-
-          {/* CV Saya Card */}
-          <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs">
-            <h3 className="font-bold text-slate-400 uppercase tracking-widest text-[10px] pb-2 border-b border-slate-100 mb-4 text-left">
-              CV Saya
-            </h3>
-
-            {/* Dotted upload layout */}
-            <div className="border-2 border-dashed border-slate-200 rounded-2xl p-5 text-center bg-slate-50/40 relative">
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx"
-                onChange={handleSimulateUpload}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-              />
-
-              <div className="space-y-2 relative z-0">
-                <FileText className="w-10 h-10 text-slate-350 mx-auto stroke-[1.5]" />
-                <p className="text-xs font-bold text-slate-800">
-                  {cvFile ? cvFile.name : "Upload CV terbaru Anda"}
-                </p>
-                <p className="text-[10px] text-slate-400 font-semibold leading-none">
-                  {cvFile ? `Ukuran: ${cvFile.size}` : "Format .PDF .DOCX max 10MB"}
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={() => {
-                if (cvFile) {
-                  toast("Mengunduh CV Anda...", "success");
-                } else {
-                  toast("Silakan unggah dokumen CV terlebih dahulu.", "error");
-                }
-              }}
-              className="w-full mt-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer"
-            >
-              Unduh CV
-            </button>
-          </div>
-
-          {/* Sertifikasi Card */}
-          <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100 mb-4">
-              <h3 className="font-bold text-slate-400 uppercase tracking-widest text-[10px] text-left">
-                Sertifikasi
-              </h3>
-              <button 
-                onClick={() => setIsAddCertModalOpen(true)}
-                className="text-xs font-extrabold text-blue-600 hover:underline"
-              >
-                + Tambah
+        <aside className="space-y-6">
+          <SectionCard title="Skill">
+            <form onSubmit={addSkill} className="flex gap-2">
+              <input value={skillInput} onChange={(event) => setSkillInput(event.target.value)} placeholder="Tambah skill" className="h-10 flex-1 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500" />
+              <button type="submit" disabled={isSaving} className="rounded-lg bg-blue-600 px-4 text-sm font-bold text-white">
+                <Plus className="h-4 w-4" />
               </button>
-            </div>
-
-            {certifications.length === 0 ? (
-              <div className="text-center py-4 text-slate-400">
-                <p className="text-xs font-semibold">Belum ada sertifikasi.</p>
-              </div>
+            </form>
+            {profile.skills.length === 0 ? (
+              <p className="mt-4 rounded-xl border border-dashed border-slate-200 p-4 text-sm font-semibold text-slate-400">Belum ada skill.</p>
             ) : (
-              <div className="space-y-4 text-left">
-                {certifications.map((cert) => (
-                  <div key={cert.id} className="flex gap-3 items-start justify-between">
-                    <div className="flex gap-3 items-start">
-                      <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-500 border border-amber-100/50 flex flex-shrink-0 items-center justify-center">
-                        <Award className="w-4.5 h-4.5 stroke-[2]" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-900 leading-snug">
-                          {cert.name}
-                        </h4>
-                        <p className="text-[10px] font-bold text-slate-400 leading-none mt-0.5">
-                          {cert.issuer}
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => handleDeleteCert(cert.id)}
-                      className="p-1 text-slate-350 hover:text-red-500 rounded transition"
-                      title="Hapus Sertifikasi"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {profile.skills.map((skill) => (
+                  <span key={skill} className="inline-flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700">
+                    {skill}
+                    <button onClick={() => removeSkill(skill)} className="text-blue-400 hover:text-red-500"><X className="h-3.5 w-3.5" /></button>
+                  </span>
                 ))}
               </div>
             )}
-          </div>
+          </SectionCard>
 
-        </div>
+          <SectionCard title="CV">
+            <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center hover:bg-slate-100">
+              {isUploadingCv ? <Loader2 className="h-7 w-7 animate-spin text-blue-600" /> : <Upload className="h-7 w-7 text-blue-600" />}
+              <span className="mt-3 text-sm font-black text-slate-800">Upload CV</span>
+              <span className="mt-1 text-xs text-slate-500">PDF/DOC/DOCX, max 4MB untuk fallback lokal</span>
+              <input type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={uploadCv} className="hidden" />
+            </label>
+            <p className="mt-3 text-xs leading-5 text-slate-500">Storage Supabase belum dikonfigurasi di tahap ini. Metadata disimpan ke database; isi file fallback disimpan lokal di browser untuk download.</p>
+            <ListEmpty visible={profile.cvFiles.length === 0} label="Belum ada CV tersimpan." />
+            <div className="mt-4 space-y-3">
+              {profile.cvFiles.map((cv) => (
+                <div key={cv.id} className="rounded-xl border border-slate-200 p-4">
+                  <div className="flex items-start gap-3">
+                    <FileText className="mt-1 h-5 w-5 text-blue-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-black text-slate-900">{cv.fileName}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">{formatSize(cv.fileSize)} - {cv.source === "local-metadata" ? "Fallback lokal" : "Storage"}</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <button onClick={() => downloadCv(cv)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 text-sm font-bold text-white">
+                      <Download className="h-4 w-4" />
+                      Download
+                    </button>
+                    <button onClick={() => deleteCv(cv)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 text-sm font-bold text-red-600">
+                      <Trash2 className="h-4 w-4" />
+                      Hapus
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+
+          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <h2 className="font-black text-amber-900">Hapus akun dinonaktifkan</h2>
+            <p className="mt-2 text-sm leading-6 text-amber-800">Penghapusan permanen belum diaktifkan pada tahap ini. Gunakan halaman Bantuan untuk membuat request manual.</p>
+          </section>
+        </aside>
       </div>
 
-      {/* ================= EDIT PROFILE MODAL ================= */}
-      {isEditProfileModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-2xl w-full border border-slate-100 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-gradient-to-r from-blue-650 to-blue-600 p-5 text-white flex justify-between items-center">
-              <div>
-                <h3 className="text-sm font-bold uppercase tracking-wider">Perbarui Informasi Profil</h3>
-                <p className="text-xs opacity-75">Sunting data primer pencari kerja Anda</p>
-              </div>
-              <button onClick={() => setIsEditProfileModalOpen(false)} className="text-white hover:opacity-80 p-1">
-                <X className="w-5 h-5" />
-              </button>
+      {isEditingProfile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <form onSubmit={submitProfile} className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-xl font-black">Edit Profil</h2>
+              <button type="button" onClick={() => setIsEditingProfile(false)}><X className="h-5 w-5" /></button>
             </div>
-
-            <form onSubmit={handleSaveProfile} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto block text-left">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">NAMA LENGKAP</label>
-                  <input
-                    type="text"
-                    required
-                    value={tempProfile.name}
-                    onChange={(e) => setTempProfile({ ...tempProfile, name: e.target.value })}
-                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">FOKUS SP SIALISASI</label>
-                  <input
-                    type="text"
-                    required
-                    value={tempProfile.title}
-                    onChange={(e) => setTempProfile({ ...tempProfile, title: e.target.value })}
-                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">KOTA DOMISILI</label>
-                  <input
-                    type="text"
-                    required
-                    value={tempProfile.location}
-                    onChange={(e) => setTempProfile({ ...tempProfile, location: e.target.value })}
-                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">ALAMAT SUREL / EMAIL</label>
-                  <input
-                    type="email"
-                    required
-                    value={tempProfile.email}
-                    onChange={(e) => setTempProfile({ ...tempProfile, email: e.target.value })}
-                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">NOMOR TELEPON</label>
-                  <input
-                    type="text"
-                    required
-                    value={tempProfile.phone}
-                    onChange={(e) => setTempProfile({ ...tempProfile, phone: e.target.value })}
-                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">LINKEDIN / PORTFOLIO</label>
-                  <input
-                    type="text"
-                    required
-                    value={tempProfile.website}
-                    onChange={(e) => setTempProfile({ ...tempProfile, website: e.target.value })}
-                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">RINGKASAN TENTANG SAYA</label>
-                <textarea
-                  rows={4}
-                  required
-                  value={tempProfile.about}
-                  onChange={(e) => setTempProfile({ ...tempProfile, about: e.target.value })}
-                  className="w-full text-xs p-3 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                  placeholder="Ceritakan sejarah ringkas profesionalisme karir Anda..."
-                />
-              </div>
-
-              <div className="flex gap-2 justify-end pt-4 border-t">
-                <button
-                  type="button"
-                  onClick={() => setIsEditProfileModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-705 text-xs font-bold rounded-xl"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-blue-605 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl"
-                >
-                  Simpan Perubahan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= TAMBAH EXP MODAL ================= */}
-      {isAddExpModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-lg w-full border border-slate-100 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-blue-600 p-5 text-white flex justify-between items-center">
-              <div>
-                <h3 className="text-sm font-bold uppercase tracking-wider">Tambah Riwayat Pengalaman Kerja</h3>
-              </div>
-              <button onClick={() => setIsAddExpModalOpen(false)} className="text-white hover:opacity-80 p-1">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateExp} className="p-6 space-y-4 text-left">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">NAMA JABATAN / ROLE</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: Senior Fullstack Developer"
-                  value={tempExp.role}
-                  onChange={(e) => setTempExp({ ...tempExp, role: e.target.value })}
-                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">NAMA PERUSAHAAN</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: PT GoTo Gojek Tokopedia"
-                  value={tempExp.company}
-                  onChange={(e) => setTempExp({ ...tempExp, company: e.target.value })}
-                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">BULAN & TAHUN MULAI</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Contoh: Jan 2022"
-                    value={tempExp.startDate}
-                    onChange={(e) => setTempExp({ ...tempExp, startDate: e.target.value })}
-                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">BULAN & TAHUN SELESAI</label>
-                  <input
-                    type="text"
-                    placeholder="Contoh: Des 2023"
-                    disabled={tempExp.isCurrent}
-                    value={tempExp.endDate}
-                    onChange={(e) => setTempExp({ ...tempExp, endDate: e.target.value })}
-                    className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50"
-                  />
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2 cursor-pointer mt-2 text-xs font-bold text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={tempExp.isCurrent}
-                  onChange={(e) => setTempExp({ ...tempExp, isCurrent: e.target.checked })}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4.5 h-4.5"
-                />
-                <span>Saya sedang bekerja pada posisi ini sekarang</span>
+            <div className="grid gap-4 md:grid-cols-2">
+              <TextInput label="Nama" value={profileForm.user.name} onChange={(value) => setProfileForm({ ...profileForm, user: { ...profileForm.user, name: value } })} required />
+              <TextInput label="Headline" value={profileForm.details.title} onChange={(value) => setProfileForm({ ...profileForm, details: { ...profileForm.details, title: value } })} />
+              <TextInput label="Lokasi" value={profileForm.details.location} onChange={(value) => setProfileForm({ ...profileForm, details: { ...profileForm.details, location: value } })} />
+              <TextInput label="Telepon" value={profileForm.details.phone} onChange={(value) => setProfileForm({ ...profileForm, details: { ...profileForm.details, phone: value } })} />
+              <TextInput label="Website" value={profileForm.details.website} onChange={(value) => setProfileForm({ ...profileForm, details: { ...profileForm.details, website: value } })} />
+              <label className="md:col-span-2">
+                <span className="mb-1 block text-xs font-bold text-slate-500">Tentang</span>
+                <textarea value={profileForm.details.about} onChange={(event) => setProfileForm({ ...profileForm, details: { ...profileForm.details, about: event.target.value } })} rows={5} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500" />
               </label>
-
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">DENGARAN TUGAS & PENCAPAIAN</label>
-                <textarea
-                  rows={3}
-                  placeholder="Deskripsikan andil Anda, piala pencapaian, dan teknologi penunjang..."
-                  value={tempExp.desc}
-                  onChange={(e) => setTempExp({ ...tempExp, desc: e.target.value })}
-                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="flex gap-2 justify-end pt-4 border-t">
-                <button
-                  type="button"
-                  onClick={() => setIsAddExpModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-705 text-xs font-bold rounded-xl"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl"
-                >
-                  Simpan Riwayat
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= TAMBAH EDU MODAL ================= */}
-      {isAddEduModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-lg w-full border border-slate-100 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-blue-600 p-5 text-white flex justify-between items-center">
-              <div>
-                <h3 className="text-sm font-bold uppercase tracking-wider">Tambah Riwayat Pendidikan</h3>
-              </div>
-              <button onClick={() => setIsAddEduModalOpen(false)} className="text-white hover:opacity-80 p-1">
-                <X className="w-5 h-5" />
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setIsEditingProfile(false)} className="h-11 rounded-lg border border-slate-200 px-5 font-semibold text-slate-700">Batal</button>
+              <button type="submit" disabled={isSaving} className="inline-flex h-11 items-center gap-2 rounded-lg bg-blue-600 px-5 font-semibold text-white">
+                <Save className="h-4 w-4" />
+                Simpan
               </button>
             </div>
-
-            <form onSubmit={handleCreateEdu} className="p-6 space-y-4 text-left">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">SEKOLAH / UNIVERSITAS</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: Universitas Indonesia"
-                  value={tempEdu.school}
-                  onChange={(e) => setTempEdu({ ...tempEdu, school: e.target.value })}
-                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">GELAR & JURUSAN AKADEMIK</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: S1 Ilmu Komputer"
-                  value={tempEdu.degree}
-                  onChange={(e) => setTempEdu({ ...tempEdu, degree: e.target.value })}
-                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">TAHUN KELULUSAN / DURATION</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: 2016 - 2020"
-                  value={tempEdu.date}
-                  onChange={(e) => setTempEdu({ ...tempEdu, date: e.target.value })}
-                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="flex gap-2 justify-end pt-4 border-t">
-                <button
-                  type="button"
-                  onClick={() => setIsAddEduModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-705 text-xs font-bold rounded-xl"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl"
-                >
-                  Simpan Pendidikan
-                </button>
-              </div>
-            </form>
-          </div>
+          </form>
         </div>
       )}
-
-      {/* ================= TAMBAH CERT MODAL ================= */}
-      {isAddCertModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-lg w-full border border-slate-100 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-blue-600 p-5 text-white flex justify-between items-center">
-              <div>
-                <h3 className="text-sm font-bold uppercase tracking-wider">Tambah Sertifikasi Profesional</h3>
-              </div>
-              <button onClick={() => setIsAddCertModalOpen(false)} className="text-white hover:opacity-80 p-1">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateCert} className="p-6 space-y-4 text-left">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">NAMA SERTIFIKASI</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: Professional Scrum Master I"
-                  value={tempCert.name}
-                  onChange={(e) => setTempCert({ ...tempCert, name: e.target.value })}
-                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">LEMBAGA PENERBIT / ISSUER</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Contoh: Scrum.org atau Google LLC"
-                  value={tempCert.issuer}
-                  onChange={(e) => setTempCert({ ...tempCert, issuer: e.target.value })}
-                  className="w-full text-xs p-2.5 border border-slate-200 rounded-xl focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="flex gap-2 justify-end pt-4 border-t">
-                <button
-                  type="button"
-                  onClick={() => setIsAddCertModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-705 text-xs font-bold rounded-xl"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl"
-                >
-                  Simpan Sertifikasi
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= SETTINGS: UBAH PASSWORD MODAL ================= */}
-      {isPassModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-sm w-full border border-slate-100 overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-slate-900 py-4 px-5 text-white flex justify-between items-center">
-              <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Lock className="w-4 h-4 text-blue-500" /> Keamanan Sandi Akun
-              </h3>
-              <button onClick={() => setIsPassModalOpen(false)} className="text-slate-400 hover:text-white font-bold text-sm">✕</button>
-            </div>
-
-            <form onSubmit={handlePasswordChangeSubmit} className="p-5 space-y-4 text-left text-xs font-bold col-span-2">
-              <div>
-                <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">PASSWORD SAAT INI (LAMA)</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Ketik password lama Anda..."
-                  value={tempPass.oldPass}
-                  onChange={(e) => setTempPass({ ...tempPass, oldPass: e.target.value })}
-                  className="w-full p-2.5 border rounded-xl"
-                />
-              </div>
-              <div>
-                <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">PASSWORD BARU</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Ketik password baru..."
-                  value={tempPass.newPass}
-                  onChange={(e) => setTempPass({ ...tempPass, newPass: e.target.value })}
-                  className="w-full p-2.5 border rounded-xl"
-                />
-              </div>
-              <div>
-                <label className="text-[9px] uppercase font-bold text-slate-400 block mb-1">KONFIRMASI PASSWORD BARU</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Ulangi mengetik sandi baru..."
-                  value={tempPass.confirmPass}
-                  onChange={(e) => setTempPass({ ...tempPass, confirmPass: e.target.value })}
-                  className="w-full p-2.5 border rounded-xl"
-                />
-              </div>
-
-              <div className="flex gap-2 justify-end pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setIsPassModalOpen(false)}
-                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-705 rounded-xl text-xs font-bold"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold"
-                >
-                  Confirm Ganti
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= SETTINGS: METODE PEMBAYARAN MODAL ================= */}
-      {isPayModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-sm w-full border border-slate-100 overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-slate-900 py-4 px-5 text-white flex justify-between items-center">
-              <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <CreditCard className="w-4 h-4 text-amber-500" /> Metode Pembayaran
-              </h3>
-              <button onClick={() => setIsPayModalOpen(false)} className="text-slate-400 hover:text-white font-bold text-sm">✕</button>
-            </div>
-
-            <div className="p-5 space-y-4 text-left text-xs font-medium">
-              <span className="font-bold text-slate-400 text-[9px] uppercase tracking-wider block">Daftar Rekening & E-Wallet Terhubung</span>
-              
-              <div className="space-y-2">
-                <div className="p-3 border rounded-xl flex justify-between bg-slate-50 items-center">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">💳</span>
-                    <div>
-                      <p className="font-bold text-slate-800 leading-tight">Mastercard **** 4820</p>
-                      <p className="text-[10px] text-slate-400">Berlaku sampai: 12/28</p>
-                    </div>
-                  </div>
-                  <span className="px-2 py-0.5 text-[8px] bg-blue-100 text-blue-800 uppercase font-bold tracking-widest rounded">Utama</span>
-                </div>
-
-                <div className="p-3 border rounded-xl flex justify-between bg-slate-50 items-center">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">🥝</span>
-                    <div>
-                      <p className="font-bold text-slate-800 leading-tight">Gopay / OVO Account</p>
-                      <p className="text-[10px] text-slate-400">0812****7890</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => toast("Integrasi gateway pembayaran baru...", "info")}
-                  className="w-full py-2 bg-slate-900 text-white rounded-xl text-center font-bold"
-                >
-                  + Tambah Kartu Kredit / E-wallet
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ================= SETTINGS: HAPUS AKUN MODAL ================= */}
-      {isDeleteAccModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-sm w-full border border-slate-100 overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-red-650 bg-rose-600 py-4 px-5 text-white flex justify-between items-center">
-              <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <AlertTriangle className="w-5 h-5 text-white" /> HAPUS AKUN PERMANEN
-              </h3>
-              <button onClick={() => setIsDeleteAccModalOpen(false)} className="text-white hover:opacity-85 font-bold text-sm">✕</button>
-            </div>
-
-            <div className="p-5 space-y-4 text-left text-xs text-slate-650">
-              <p className="font-bold text-slate-900 text-sm">Apakah Anda yakin ingin menghapus akun?</p>
-              <p>
-                Tindakan ini <strong>tidak dapat dibatalkan</strong>. Semua riwayat karir, data resume ATS, serta invoice transaksional karir Anda akan dihapus selamanya dari node database KarirHub.
-              </p>
-
-              <div className="flex gap-2 justify-end pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setIsDeleteAccModalOpen(false)}
-                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-705 rounded-xl font-bold"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsDeleteAccModalOpen(false);
-                    toast("Permintaan penghapusan sedang diverifikasi adminsitor.", "info");
-                  }}
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold"
-                >
-                  Hapus Permanen
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 };
+
+const InfoLabel = ({ label, value }: { label: string; value: string }) => (
+  <div className="rounded-xl bg-slate-50 p-4">
+    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">{label}</p>
+    <p className="mt-1 font-bold text-slate-800">{value}</p>
+  </div>
+);
+
+const SmallAction = ({ onClick, label }: { onClick: () => void; label: string }) => (
+  <button onClick={onClick} className="inline-flex h-9 items-center gap-1 rounded-lg bg-blue-50 px-3 text-sm font-bold text-blue-700 hover:bg-blue-100">
+    <Plus className="h-4 w-4" />
+    {label}
+  </button>
+);
+
+const ProfileForm = ({ onSubmit, onCancel, children }: { onSubmit: (event: React.FormEvent) => void; onCancel: () => void; children: React.ReactNode }) => (
+  <form onSubmit={onSubmit} className="mb-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
+    <div className="grid gap-4 md:grid-cols-2">{children}</div>
+    <div className="mt-4 flex justify-end gap-2">
+      <button type="button" onClick={onCancel} className="h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700">Batal</button>
+      <button type="submit" className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-bold text-white">Simpan</button>
+    </div>
+  </form>
+);
+
+const ListEmpty = ({ visible, label }: { visible: boolean; label: string }) =>
+  visible ? <p className="rounded-xl border border-dashed border-slate-200 p-5 text-sm font-semibold text-slate-400">{label}</p> : null;
+
+const ListItem = ({
+  icon: Icon,
+  title,
+  subtitle,
+  body,
+  onEdit,
+  onDelete
+}: {
+  icon: React.ElementType;
+  title: string;
+  subtitle?: string;
+  body?: string;
+  onEdit: () => void;
+  onDelete: () => void;
+}) => (
+  <article className="flex gap-4 rounded-xl border border-slate-200 p-4">
+    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+      <Icon className="h-5 w-5" />
+    </div>
+    <div className="min-w-0 flex-1">
+      <h3 className="font-black text-slate-900">{title}</h3>
+      {subtitle && <p className="mt-1 text-sm font-semibold text-slate-500">{subtitle}</p>}
+      {body && <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-600">{body}</p>}
+    </div>
+    <div className="flex gap-1">
+      <button onClick={onEdit} className="h-9 w-9 rounded-lg text-slate-500 hover:bg-slate-50" title="Edit"><Edit3 className="mx-auto h-4 w-4" /></button>
+      <button onClick={onDelete} className="h-9 w-9 rounded-lg text-red-500 hover:bg-red-50" title="Hapus"><Trash2 className="mx-auto h-4 w-4" /></button>
+    </div>
+  </article>
+);

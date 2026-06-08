@@ -150,6 +150,306 @@ async function handleMe(req: any, res: any) {
   return sendJson(res, 200, { user: publicUser(profile, user.email || "") });
 }
 
+function defaultProfileDetails(user: any, profile: any) {
+  return {
+    title: profile.role === "recruiter" ? "Recruiter" : profile.role === "seller" ? "Pakar Karir" : "Job Seeker",
+    location: "",
+    phone: "",
+    website: "",
+    about: "",
+    language: "id",
+    region: "ID",
+    email_notifications: true,
+    product_notifications: false,
+    payment_methods: [],
+  };
+}
+
+function mapProfilePayload(user: any, profile: any, details: any, experiences: any[], educations: any[], certifications: any[], skills: any[], cvFiles: any[]) {
+  const safeDetails = details || defaultProfileDetails(user, profile);
+
+  return {
+    user: publicUser(profile, user.email || ""),
+    details: {
+      title: safeDetails.title || "",
+      location: safeDetails.location || "",
+      phone: safeDetails.phone || "",
+      website: safeDetails.website || "",
+      about: safeDetails.about || "",
+    },
+    experiences: (experiences || []).map((item: any) => ({
+      id: item.id,
+      role: item.role,
+      company: item.company,
+      startDate: item.start_date || "",
+      endDate: item.end_date || "",
+      isCurrent: Boolean(item.is_current),
+      description: item.description || "",
+    })),
+    educations: (educations || []).map((item: any) => ({
+      id: item.id,
+      school: item.school,
+      degree: item.degree,
+      period: item.period || "",
+    })),
+    certifications: (certifications || []).map((item: any) => ({
+      id: item.id,
+      name: item.name,
+      issuer: item.issuer,
+    })),
+    skills: (skills || []).map((item: any) => item.skill).filter(Boolean),
+    cvFiles: (cvFiles || []).map((item: any) => ({
+      id: item.id,
+      fileName: item.file_name,
+      fileSize: item.file_size || 0,
+      fileType: item.file_type || "",
+      downloadUrl: item.download_url || "",
+      source: item.source || "local-metadata",
+      createdAt: item.created_at,
+    })),
+    settings: {
+      language: safeDetails.language || "id",
+      region: safeDetails.region || "ID",
+      emailNotifications: safeDetails.email_notifications !== false,
+      productNotifications: Boolean(safeDetails.product_notifications),
+      paymentMethods: Array.isArray(safeDetails.payment_methods) ? safeDetails.payment_methods : [],
+    },
+  };
+}
+
+async function readProfileBundle(user: any) {
+  const { data: profile, error: profileError } = await supabaseAdmin
+    .from("user_profiles")
+    .select("id, full_name, role, avatar_url, company")
+    .eq("id", user.id)
+    .single();
+
+  if (profileError || !profile) {
+    return { error: profileError?.message || "Profil user belum tersedia.", profile: null };
+  }
+
+  const [detailsResult, expResult, eduResult, certResult, skillResult, cvResult] = await Promise.all([
+    supabaseAdmin.from("user_profile_details").select("*").eq("user_id", user.id).maybeSingle(),
+    supabaseAdmin.from("user_profile_experiences").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: false }),
+    supabaseAdmin.from("user_profile_educations").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: false }),
+    supabaseAdmin.from("user_profile_certifications").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: false }),
+    supabaseAdmin.from("user_profile_skills").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
+    supabaseAdmin.from("user_cv_files").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
+  ]);
+
+  const firstError = detailsResult.error || expResult.error || eduResult.error || certResult.error || skillResult.error || cvResult.error;
+  if (firstError) return { error: firstError.message, profile: null };
+
+  return {
+    error: null,
+    profile: mapProfilePayload(
+      user,
+      profile,
+      detailsResult.data,
+      expResult.data || [],
+      eduResult.data || [],
+      certResult.data || [],
+      skillResult.data || [],
+      cvResult.data || []
+    ),
+  };
+}
+
+async function replaceProfileList(table: string, userId: string, rows: any[]) {
+  const { error: deleteError } = await supabaseAdmin.from(table).delete().eq("user_id", userId);
+  if (deleteError) return deleteError;
+  if (!rows.length) return null;
+  const { error } = await supabaseAdmin.from(table).insert(rows);
+  return error;
+}
+
+async function handleProfile(req: any, res: any) {
+  const { user, error: authError } = await requireUser(req, supabaseAdmin);
+  if (!user) return sendError(res, 401, authError || "Session tidak valid.");
+
+  if (req.method === "GET") {
+    const bundle = await readProfileBundle(user);
+    if (bundle.error) return sendError(res, 500, "Gagal mengambil profil user.", bundle.error);
+    return sendJson(res, 200, { profile: bundle.profile });
+  }
+
+  if (req.method === "PATCH" || req.method === "PUT") {
+    const payload = req.body || {};
+    const userPatch = payload.user || {};
+    const details = payload.details || {};
+    const settings = payload.settings || {};
+
+    if (userPatch.name) {
+      const profileUpdates: any = { full_name: userPatch.name };
+      if (userPatch.avatar !== undefined) profileUpdates.avatar_url = userPatch.avatar || null;
+      if (userPatch.company !== undefined) profileUpdates.company = userPatch.company || null;
+      const { error } = await supabaseAdmin
+        .from("user_profiles")
+        .update(profileUpdates)
+        .eq("id", user.id);
+      if (error) return sendError(res, 500, "Gagal memperbarui data akun.", error.message);
+    }
+
+    const detailRow: any = {
+      user_id: user.id,
+      title: details.title,
+      location: details.location,
+      phone: details.phone,
+      website: details.website,
+      about: details.about,
+      language: settings.language,
+      region: settings.region,
+      email_notifications: settings.emailNotifications,
+      product_notifications: settings.productNotifications,
+      payment_methods: Array.isArray(settings.paymentMethods) ? settings.paymentMethods : undefined,
+    };
+    Object.keys(detailRow).forEach((key) => detailRow[key] === undefined && delete detailRow[key]);
+
+    const { error: detailError } = await supabaseAdmin.from("user_profile_details").upsert(detailRow);
+    if (detailError) return sendError(res, 500, "Gagal menyimpan detail profil.", detailError.message);
+
+    if (Array.isArray(payload.experiences)) {
+      const error = await replaceProfileList(
+        "user_profile_experiences",
+        user.id,
+        payload.experiences.map((item: any, index: number) => ({
+          user_id: user.id,
+          role: item.role || "Role",
+          company: item.company || "Perusahaan",
+          start_date: item.startDate || "",
+          end_date: item.endDate || "",
+          is_current: Boolean(item.isCurrent),
+          description: item.description || "",
+          sort_order: index,
+        }))
+      );
+      if (error) return sendError(res, 500, "Gagal menyimpan pengalaman.", error.message);
+    }
+
+    if (Array.isArray(payload.educations)) {
+      const error = await replaceProfileList(
+        "user_profile_educations",
+        user.id,
+        payload.educations.map((item: any, index: number) => ({
+          user_id: user.id,
+          school: item.school || "Institusi",
+          degree: item.degree || "Gelar",
+          period: item.period || "",
+          sort_order: index,
+        }))
+      );
+      if (error) return sendError(res, 500, "Gagal menyimpan pendidikan.", error.message);
+    }
+
+    if (Array.isArray(payload.certifications)) {
+      const error = await replaceProfileList(
+        "user_profile_certifications",
+        user.id,
+        payload.certifications.map((item: any, index: number) => ({
+          user_id: user.id,
+          name: item.name || "Sertifikasi",
+          issuer: item.issuer || "Issuer",
+          sort_order: index,
+        }))
+      );
+      if (error) return sendError(res, 500, "Gagal menyimpan sertifikasi.", error.message);
+    }
+
+    if (Array.isArray(payload.skills)) {
+      const uniqueSkills = Array.from(new Set(payload.skills.map((skill: any) => String(skill || "").trim()).filter(Boolean)));
+      const error = await replaceProfileList(
+        "user_profile_skills",
+        user.id,
+        uniqueSkills.map((skill, index) => ({ user_id: user.id, skill, sort_order: index }))
+      );
+      if (error) return sendError(res, 500, "Gagal menyimpan skill.", error.message);
+    }
+
+    const bundle = await readProfileBundle(user);
+    if (bundle.error) return sendError(res, 500, "Profil tersimpan, tetapi gagal dimuat ulang.", bundle.error);
+    return sendJson(res, 200, { profile: bundle.profile });
+  }
+
+  return sendError(res, 405, "Method not allowed");
+}
+
+async function handleProfileCv(req: any, res: any) {
+  const { user, error: authError } = await requireUser(req, supabaseAdmin);
+  if (!user) return sendError(res, 401, authError || "Session tidak valid.");
+
+  if (req.method === "POST") {
+    const { fileName, fileSize = 0, fileType, downloadUrl } = req.body || {};
+    if (!fileName) return sendError(res, 400, "Nama file CV wajib dikirim.");
+
+    const { data, error } = await supabaseAdmin
+      .from("user_cv_files")
+      .insert({
+        user_id: user.id,
+        file_name: String(fileName).slice(0, 180),
+        file_size: Number(fileSize) || 0,
+        file_type: fileType || null,
+        download_url: downloadUrl || null,
+        source: downloadUrl ? "supabase-storage" : "local-metadata",
+      })
+      .select("*")
+      .single();
+
+    if (error || !data) return sendError(res, 500, "Gagal menyimpan metadata CV.", error?.message);
+    return sendJson(res, 201, {
+      cvFile: {
+        id: data.id,
+        fileName: data.file_name,
+        fileSize: data.file_size,
+        fileType: data.file_type || "",
+        downloadUrl: data.download_url || "",
+        source: data.source,
+        createdAt: data.created_at,
+      },
+    });
+  }
+
+  if (req.method === "DELETE") {
+    const id = req.query?.id || req.body?.id;
+    if (!id) return sendError(res, 400, "id CV wajib dikirim.");
+    const { error } = await supabaseAdmin.from("user_cv_files").delete().eq("id", id).eq("user_id", user.id);
+    if (error) return sendError(res, 500, "Gagal menghapus CV.", error.message);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  return sendError(res, 405, "Method not allowed");
+}
+
+async function handleSettings(req: any, res: any) {
+  const { user, error: authError } = await requireUser(req, supabaseAdmin);
+  if (!user) return sendError(res, 401, authError || "Session tidak valid.");
+
+  if (req.method === "GET") {
+    const bundle = await readProfileBundle(user);
+    if (bundle.error) return sendError(res, 500, "Gagal mengambil pengaturan.", bundle.error);
+    return sendJson(res, 200, { settings: bundle.profile?.settings, user: bundle.profile?.user });
+  }
+
+  if (req.method === "PATCH" || req.method === "PUT") {
+    const payload = req.body || {};
+    const row: any = {
+      user_id: user.id,
+      language: payload.language,
+      region: payload.region,
+      email_notifications: payload.emailNotifications,
+      product_notifications: payload.productNotifications,
+      payment_methods: Array.isArray(payload.paymentMethods) ? payload.paymentMethods : undefined,
+    };
+    Object.keys(row).forEach((key) => row[key] === undefined && delete row[key]);
+    const { error } = await supabaseAdmin.from("user_profile_details").upsert(row);
+    if (error) return sendError(res, 500, "Gagal menyimpan pengaturan.", error.message);
+    const bundle = await readProfileBundle(user);
+    if (bundle.error) return sendError(res, 500, "Pengaturan tersimpan, tetapi gagal dimuat ulang.", bundle.error);
+    return sendJson(res, 200, { settings: bundle.profile?.settings });
+  }
+
+  return sendError(res, 405, "Method not allowed");
+}
+
 async function handlePublicServices(res: any) {
   const { data, error } = await supabaseAdmin
     .from("services")
@@ -681,6 +981,9 @@ export default async function handler(req: any, res: any) {
     if (route === "auth/register" && method === "POST") return handleRegister(req, res);
     if (route === "auth/login" && method === "POST") return handleLogin(req, res);
     if (route === "auth/me" && method === "GET") return handleMe(req, res);
+    if (route === "profile") return handleProfile(req, res);
+    if (route === "profile/cv") return handleProfileCv(req, res);
+    if (route === "settings") return handleSettings(req, res);
     if (route === "services" && method === "GET") return handlePublicServices(res);
     if (route === "jobs" && method === "GET") return handlePublicJobs(res);
     if (route === "orders") return handleOrders(req, res);
