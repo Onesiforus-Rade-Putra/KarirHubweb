@@ -5,6 +5,7 @@ import { Transaction } from "../../types";
 interface TxListProps {
   transactions: Transaction[];
   toast: (msg: string, status?: string) => void;
+  onSupport?: () => void;
 }
 
 const fallbackTransactions: Transaction[] = [
@@ -64,7 +65,7 @@ const DetailRow = ({ label, value }: { label: string; value: React.ReactNode }) 
   </div>
 );
 
-export const TransactionsHistory: React.FC<TxListProps> = ({ transactions, toast }) => {
+export const TransactionsHistory: React.FC<TxListProps> = ({ transactions, toast, onSupport }) => {
   const [txList, setTxList] = useState<Transaction[]>(transactions.length ? transactions : fallbackTransactions);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeStatus, setActiveStatus] = useState<"Semua" | Transaction["status"]>("Semua");
@@ -149,12 +150,12 @@ export const TransactionsHistory: React.FC<TxListProps> = ({ transactions, toast
               <button onClick={() => setSelectedTx(null)} className="mt-4 h-12 w-full rounded-lg border border-slate-200 font-semibold text-slate-700 hover:bg-slate-50">
                 Ganti Metode Pembayaran
               </button>
-              <p className="mt-7 flex items-center justify-center gap-2 font-semibold text-blue-600"><HelpCircle className="h-5 w-5" />Hubungi Bantuan</p>
+              <button onClick={onSupport} className="mt-7 flex w-full items-center justify-center gap-2 font-semibold text-blue-600"><HelpCircle className="h-5 w-5" />Hubungi Bantuan</button>
             </>
           ) : (
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
               <button onClick={() => setSelectedTx(null)} className="h-12 rounded-lg border border-slate-200 font-semibold text-slate-700 hover:bg-slate-50">Kembali</button>
-              <button className="h-12 rounded-lg bg-blue-600 font-semibold text-white hover:bg-blue-700">Hubungi Bantuan</button>
+              <button onClick={onSupport} className="h-12 rounded-lg bg-blue-600 font-semibold text-white hover:bg-blue-700">Hubungi Bantuan</button>
             </div>
           )}
         </div>

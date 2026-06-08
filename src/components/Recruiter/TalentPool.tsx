@@ -40,6 +40,8 @@ const candidateInitials = (name: string) =>
 
 export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBookmarkCandidate, savedCandidatesOnly, setSavedCandidatesOnly }) => {
   const [searchTerm, setSearchTerm] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [availabilityFilter, setAvailabilityFilter] = useState<"Semua" | "Tersedia" | "Tidak Tersedia">("Semua");
   const sourceCandidates = candidates.length
     ? candidates.map((candidate) => ({
         id: candidate.id,
@@ -59,8 +61,9 @@ export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBook
 
   const visible = sourceCandidates.filter((candidate) => {
     const matchSaved = savedCandidatesOnly ? candidate.saved : true;
+    const matchAvailability = availabilityFilter === "Semua" || candidate.status === availabilityFilter;
     const term = searchTerm.toLowerCase();
-    return matchSaved && (candidate.name.toLowerCase().includes(term) || candidate.title.toLowerCase().includes(term) || candidate.skills.join(" ").toLowerCase().includes(term));
+    return matchSaved && matchAvailability && (candidate.name.toLowerCase().includes(term) || candidate.title.toLowerCase().includes(term) || candidate.skills.join(" ").toLowerCase().includes(term));
   });
 
   return (
@@ -83,23 +86,44 @@ export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBook
             <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
             <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} className="h-12 w-full rounded-lg border border-slate-200 pl-12 pr-4 outline-none focus:border-emerald-500" placeholder="Cari berdasarkan nama, posisi, atau skill..." />
           </label>
-          <button className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 px-8 font-semibold text-slate-800 hover:bg-slate-50">
+          <button onClick={() => setAdvancedOpen((open) => !open)} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-slate-200 px-8 font-semibold text-slate-800 hover:bg-slate-50">
             <Filter className="h-5 w-5" />
             Filter Lanjutan
           </button>
         </div>
+        {advancedOpen && (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-black text-slate-700">Status kandidat</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(["Semua", "Tersedia", "Tidak Tersedia"] as const).map((status) => (
+                <button key={status} onClick={() => setAvailabilityFilter(status)} className={`rounded-lg px-4 py-2 text-sm font-semibold ${availabilityFilter === status ? "bg-emerald-600 text-white" : "bg-white text-slate-600 hover:bg-slate-100"}`}>
+                  {status}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="mt-4 flex flex-wrap gap-2">
           <button onClick={() => setSavedCandidatesOnly(false)} className={`h-10 rounded-lg px-4 font-semibold ${!savedCandidatesOnly ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"}`}>Semua Kandidat ({sourceCandidates.length})</button>
           <button onClick={() => setSavedCandidatesOnly(true)} className={`h-10 rounded-lg px-4 font-semibold ${savedCandidatesOnly ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"}`}>Tersimpan ({sourceCandidates.filter((candidate) => candidate.saved).length})</button>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
           <span className="font-medium text-slate-600">Filter cepat:</span>
-          {["Frontend Developer", "Backend Developer", "Full Stack", "Designer", "Product Manager"].map((tag) => <span key={tag} className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-600">{tag}</span>)}
+          {["Frontend Developer", "Backend Developer", "Full Stack", "Designer", "Product Manager"].map((tag) => (
+            <button key={tag} onClick={() => setSearchTerm(tag)} className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-600 hover:bg-slate-200">
+              {tag}
+            </button>
+          ))}
         </div>
       </section>
 
       <div className="mt-8 grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3">
-        {visible.map((candidate) => (
+        {visible.length === 0 ? (
+          <div className="col-span-full rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+            <p className="text-lg font-black text-slate-800">Kandidat tidak ditemukan.</p>
+            <p className="mt-2 text-sm text-slate-500">Coba ubah kata kunci, status, atau filter tersimpan.</p>
+          </div>
+        ) : visible.map((candidate) => (
           <article key={candidate.id} className="relative rounded-2xl border border-slate-200 bg-white p-7">
             <button onClick={() => onToggleBookmarkCandidate(candidate.id)} className={`absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-lg ${candidate.saved ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-400"}`}>
               <Bookmark className={`h-5 w-5 ${candidate.saved ? "fill-amber-500" : ""}`} />

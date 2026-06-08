@@ -24,6 +24,7 @@ interface MarketplaceProps {
   services: CareerService[];
   onAddTransaction: (tx: Transaction, order: ServiceOrder) => void | Promise<void>;
   currentUser: any;
+  onSupport?: () => void;
 }
 
 type Stage = "browse" | "checkout" | "qris" | "va" | "success" | "failed" | "detail";
@@ -87,7 +88,7 @@ const Notice = ({ tone, title, desc }: { tone: "success" | "danger"; title: stri
   );
 };
 
-export const Marketplace: React.FC<MarketplaceProps> = ({ services, onAddTransaction, currentUser }) => {
+export const Marketplace: React.FC<MarketplaceProps> = ({ services, onAddTransaction, currentUser, onSupport }) => {
   const [selectedService, setSelectedService] = useState<CareerService | null>(null);
   const [stage, setStage] = useState<Stage>("browse");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("QRIS");
@@ -378,7 +379,7 @@ export const Marketplace: React.FC<MarketplaceProps> = ({ services, onAddTransac
             <>
               <button onClick={continuePayment} className="mt-6 h-12 w-full rounded-lg bg-blue-600 font-semibold text-white hover:bg-blue-700">Coba Bayar Lagi</button>
               <button onClick={() => setStage("checkout")} className="mt-4 h-12 w-full rounded-lg border border-slate-200 font-semibold text-slate-700 hover:bg-slate-50">Ganti Metode Pembayaran</button>
-              <p className="mt-7 flex items-center justify-center gap-2 font-semibold text-blue-600"><HelpCircle className="h-5 w-5" />Hubungi Bantuan</p>
+              <button onClick={onSupport} className="mt-7 inline-flex items-center justify-center gap-2 font-semibold text-blue-600"><HelpCircle className="h-5 w-5" />Hubungi Bantuan</button>
             </>
           )}
         </div>
@@ -419,7 +420,7 @@ export const Marketplace: React.FC<MarketplaceProps> = ({ services, onAddTransac
           </section>
           <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
             <button onClick={() => setStage("browse")} className="h-12 rounded-lg border border-slate-200 font-semibold text-slate-700 hover:bg-slate-50">Kembali</button>
-            <button className="h-12 rounded-lg bg-blue-600 font-semibold text-white hover:bg-blue-700">Hubungi Bantuan</button>
+            <button onClick={onSupport} className="h-12 rounded-lg bg-blue-600 font-semibold text-white hover:bg-blue-700">Hubungi Bantuan</button>
           </div>
         </div>
       </div>

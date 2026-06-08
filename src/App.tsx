@@ -17,6 +17,7 @@ import { Auth } from "./components/Shared/Auth";
 import { LandingPage } from "./components/Shared/LandingPage";
 import { TransactionsHistory } from "./components/Shared/TransactionsHistory";
 import { UserProfile } from "./components/Shared/UserProfile";
+import { HelpPage, PrivacyPage, SettingsPage, TermsPage } from "./components/Shared/StaticPages";
 
 // Job Seeker Components
 import { SeekerDashboard } from "./components/JobSeeker/SeekerDashboard";
@@ -71,6 +72,19 @@ import {
   updateSellerService
 } from "./lib/karirHubApi";
 
+const SAVED_JOBS_STORAGE_KEY = "karirhub_saved_jobs";
+
+const readSavedJobs = () => {
+  if (typeof window === "undefined") return ["job-1", "job-3"];
+  try {
+    const stored = window.localStorage.getItem(SAVED_JOBS_STORAGE_KEY);
+    const parsed = stored ? JSON.parse(stored) : null;
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : ["job-1", "job-3"];
+  } catch {
+    return ["job-1", "job-3"];
+  }
+};
+
 export default function App() {
   // Global React persistent simulation db states
   const [jobs, setJobs] = useState<Job[]>(INITIAL_JOBS);
@@ -94,7 +108,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   // Bookmark / Save statuses
-  const [savedJobs, setSavedJobs] = useState<string[]>(["job-1", "job-3"]);
+  const [savedJobs, setSavedJobs] = useState<string[]>(readSavedJobs);
   const [savedCandidatesOnly, setSavedCandidatesOnly] = useState<boolean>(false);
 
   // Toast State
@@ -112,6 +126,14 @@ export default function App() {
       return () => clearTimeout(tm);
     }
   }, [toastMsg]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SAVED_JOBS_STORAGE_KEY, JSON.stringify(savedJobs));
+    } catch {
+      // Bookmark tetap berjalan di state walau storage browser tidak tersedia.
+    }
+  }, [savedJobs]);
 
   useEffect(() => {
     getCurrentUser()
@@ -241,10 +263,10 @@ export default function App() {
   // Saved Loker bookmarks
   const handleToggleSaveJob = (jobId: string) => {
     if (savedJobs.includes(jobId)) {
-      setSavedJobs(savedJobs.filter((id) => id !== jobId));
+      setSavedJobs((prev) => prev.filter((id) => id !== jobId));
       triggerToast("Postingan lowongan dihapus dari daftar simpanan.", "info");
     } else {
-      setSavedJobs([...savedJobs, jobId]);
+      setSavedJobs((prev) => [...prev, jobId]);
       triggerToast("Postingan lowongan disimpan ke tab Anda.", "success");
     }
   };
@@ -458,10 +480,10 @@ export default function App() {
 
   // Recruiter bookmark talents
   const handleToggleBookmarkCandidate = (id: string) => {
-    setCandidates(
-      candidates.map((c) => c.id === id ? { ...c, savedByRecruiter: !c.savedByRecruiter } : c)
+    setRecruiterCandidates(
+      recruiterCandidates.map((c) => c.id === id ? { ...c, savedByRecruiter: !c.savedByRecruiter } : c)
     );
-    triggerToast("Database talent pool diperbarui saksama.", "success");
+    triggerToast("Bookmark kandidat diperbarui untuk sesi ini.", "success");
   };
 
   const handleUpdateUserName = (newName: string) => {
@@ -512,6 +534,7 @@ export default function App() {
           <TransactionsHistory
             transactions={transactions}
             toast={(msg, st) => triggerToast(msg, st as any)}
+            onSupport={() => setActiveTab("bantuan")}
           />
         )}
 
@@ -522,6 +545,19 @@ export default function App() {
             toast={(msg, st) => triggerToast(msg, st as any)}
           />
         )}
+
+        {activeTab === "settings" && (
+          <SettingsPage
+            currentUser={currentUser}
+            toast={(msg, st) => triggerToast(msg, st as any)}
+          />
+        )}
+
+        {activeTab === "bantuan" && <HelpPage toast={(msg, st) => triggerToast(msg, st as any)} />}
+
+        {activeTab === "ketentuan" && <TermsPage />}
+
+        {activeTab === "privasi" && <PrivacyPage />}
 
         {/* ==================== PENCARI KERJA WORKFLOWS ==================== */}
         {currentRole === "seeker" && (
@@ -536,7 +572,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === "foto-cv" && <AIPhotoStudio onSaveRequest={handleAIPhotoRequest} />}
+            {activeTab === "foto-cv" && <AIPhotoStudio onSaveRequest={handleAIPhotoRequest} onSupport={() => setActiveTab("bantuan")} />}
 
             {activeTab === "builder" && <ATSBuilder />}
 
@@ -545,6 +581,7 @@ export default function App() {
                 services={services}
                 onAddTransaction={handleAddTransactionOrder}
                 currentUser={currentUser}
+                onSupport={() => setActiveTab("bantuan")}
               />
             )}
 
@@ -554,6 +591,7 @@ export default function App() {
                 onApplyJob={handleApplyJob}
                 savedJobs={savedJobs}
                 onToggleSaveJob={handleToggleSaveJob}
+                onNotify={(msg, st) => triggerToast(msg, st)}
               />
             )}
           </>
@@ -663,7 +701,7 @@ export default function App() {
       </main>
 
       {/* Footer layout */}
-      <Footer />
+      <Footer setActiveTab={setActiveTab} />
 
       {/* TOAST SYSTEM POPUP */}
       {toastMsg && (
