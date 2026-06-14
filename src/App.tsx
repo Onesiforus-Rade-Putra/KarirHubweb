@@ -657,6 +657,37 @@ export default function App() {
     }
   };
 
+  const sellerNotifications = currentRole === "seller"
+    ? [
+        ...sellerOrders
+          .filter((order) => (order.orderStatus || (order.status === "Baru" ? "pending" : "")) === "pending")
+          .slice(0, 3)
+          .map((order) => ({
+            id: `order-${order.id}`,
+            title: "Pesanan baru menunggu respons",
+            description: `${order.serviceTitle} dari ${order.buyerName}`,
+            tab: "seller-orders",
+          })),
+        ...sessions
+          .filter((session) => session.status === "pending")
+          .slice(0, 2)
+          .map((session) => ({
+            id: `session-${session.id}`,
+            title: "Jadwal konsultasi menunggu konfirmasi",
+            description: `${session.serviceTitle} dengan ${session.clientName}`,
+            tab: "seller-schedule",
+          })),
+        ...(sellerEarnings?.held_balance
+          ? [{
+              id: "seller-held-balance",
+              title: "Saldo tertahan penarikan",
+              description: `${new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(sellerEarnings.held_balance)} sedang diproses.`,
+              tab: "seller-earnings",
+            }]
+          : []),
+      ]
+    : [];
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans flex flex-col justify-between selection:bg-blue-100 selection:text-blue-800">
       {/* Main Navbar */}
@@ -666,6 +697,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         user={currentUser}
         onLogout={handleLogout}
+        notifications={sellerNotifications}
       />
 
       {/* Content Center Frame */}
@@ -715,6 +747,8 @@ export default function App() {
           <SettingsPage
             currentUser={currentUser}
             toast={(msg, st) => triggerToast(msg, st as any)}
+            onHelp={() => setActiveTab("bantuan")}
+            onLogout={handleLogout}
           />
         )}
 
@@ -781,6 +815,7 @@ export default function App() {
             {activeTab === "seller-services" && (
               <ServiceManager
                 services={sellerServices}
+                orders={sellerOrders}
                 isLoading={sellerServicesLoading}
                 error={sellerServicesError}
                 onRetry={loadSellerServices}

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { CareerService } from "../../types";
+import { CareerService, ServiceOrder } from "../../types";
 import { AlertCircle, Archive, Box, CheckCircle2, Edit3, Eye, Plus, RefreshCw, Star, ToggleLeft, ToggleRight, Trash2, X } from "lucide-react";
 
 type ServiceFormValues = {
@@ -15,6 +15,7 @@ type ServiceFilter = "active" | "archived" | "all";
 
 interface ServiceManagerProps {
   services: CareerService[];
+  orders?: ServiceOrder[];
   isLoading: boolean;
   error?: string | null;
   onRetry: () => void | Promise<void>;
@@ -96,6 +97,7 @@ const FieldLabel: React.FC<{ label: string; children: React.ReactNode }> = ({ la
 
 export const ServiceManager: React.FC<ServiceManagerProps> = ({
   services,
+  orders = [],
   isLoading,
   error,
   onRetry,
@@ -124,6 +126,14 @@ export const ServiceManager: React.FC<ServiceManagerProps> = ({
     if (filter === "archived") return services.filter((item) => !item.active);
     return services;
   }, [filter, services]);
+  const serviceSalesCount = useMemo(() => {
+    const counts = new Map<string, number>();
+    orders.forEach((order) => {
+      if (order.serviceId) counts.set(order.serviceId, (counts.get(order.serviceId) || 0) + 1);
+      if (!order.serviceId) counts.set(order.serviceTitle, (counts.get(order.serviceTitle) || 0) + 1);
+    });
+    return counts;
+  }, [orders]);
 
   const openAddForm = () => {
     setForm(emptyForm);
@@ -439,7 +449,7 @@ export const ServiceManager: React.FC<ServiceManagerProps> = ({
                   </div>
                   <div className="rounded-lg bg-slate-50 p-4">
                     <p className="text-sm text-slate-500">Terjual</p>
-                    <p className="mt-2 text-xl font-black text-slate-400">Belum tersedia</p>
+                    <p className="mt-2 text-xl font-black text-slate-900">{serviceSalesCount.get(service.id) || serviceSalesCount.get(service.title) || 0} pesanan</p>
                   </div>
                   <div className="rounded-lg bg-orange-50 p-4">
                     <p className="text-sm text-slate-500">Rating</p>
@@ -475,10 +485,10 @@ export const ServiceManager: React.FC<ServiceManagerProps> = ({
                       </button>
                     )}
                   </div>
-                  <button disabled title="Statistik layanan belum tersedia" className="inline-flex h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-400">
+                  <div className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-500">
                     <Eye className="h-4 w-4" />
-                    Statistik belum tersedia
-                  </button>
+                    Statistik dari pesanan nyata
+                  </div>
                 </div>
               </article>
             ))}
