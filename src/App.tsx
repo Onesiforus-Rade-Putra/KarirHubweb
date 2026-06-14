@@ -106,6 +106,8 @@ export default function App() {
   const [sellerEarnings, setSellerEarnings] = useState<SellerEarningsSummary | null>(null);
   const [sellerDashboardLoading, setSellerDashboardLoading] = useState(false);
   const [sellerDashboardErrors, setSellerDashboardErrors] = useState<SellerDashboardErrors>({});
+  const [sellerServicesLoading, setSellerServicesLoading] = useState(false);
+  const [sellerServicesError, setSellerServicesError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ConsultationSession[]>(INITIAL_SESSIONS);
   const [applicants, setApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
   const [recruiterApplicants, setRecruiterApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
@@ -191,6 +193,7 @@ export default function App() {
     if (!currentUser || currentUser.role !== "seller") return;
 
     setSellerDashboardLoading(true);
+    setSellerServicesLoading(true);
     setSellerDashboardErrors({});
 
     const [servicesResult, ordersResult, earningsResult] = await Promise.allSettled([fetchSellerServices(), fetchSellerOrders(), fetchSellerEarnings()]);
@@ -198,8 +201,10 @@ export default function App() {
 
     if (servicesResult.status === "fulfilled") {
       setSellerServices(servicesResult.value.services);
+      setSellerServicesError(null);
     } else {
       nextErrors.services = servicesResult.reason instanceof Error ? servicesResult.reason.message : "GET /api/seller/services gagal.";
+      setSellerServicesError(nextErrors.services);
     }
 
     if (ordersResult.status === "fulfilled") {
@@ -216,6 +221,24 @@ export default function App() {
 
     setSellerDashboardErrors(nextErrors);
     setSellerDashboardLoading(false);
+    setSellerServicesLoading(false);
+  };
+
+  const loadSellerServices = async () => {
+    if (!currentUser || currentUser.role !== "seller") return;
+
+    setSellerServicesLoading(true);
+    setSellerServicesError(null);
+    try {
+      const { services } = await fetchSellerServices();
+      setSellerServices(services);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "GET /api/seller/services gagal.";
+      setSellerServicesError(message);
+      throw error;
+    } finally {
+      setSellerServicesLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -373,29 +396,27 @@ export default function App() {
   };
 
   // Seller Layanan Management
-  const handleAddService = async (newSrv: CareerService) => {
+  const handleAddService = async (newSrv: Partial<CareerService>) => {
     if (!currentUser) {
       triggerToast("Silakan login sebagai seller untuk menambah layanan.", "error");
       return;
     }
 
     try {
-      const { service } = await createSellerService(newSrv);
-      setSellerServices([service, ...sellerServices]);
-      setServices([service, ...services]);
-      triggerToast(`Layanan Karir '${service.title}' dipublikasi ke marketplace pencari kerja!`, "success");
+      await createSellerService(newSrv);
+      await loadSellerServices();
+      triggerToast("Layanan karir berhasil disimpan dan dimuat ulang dari database.", "success");
     } catch (error) {
       triggerToast(error instanceof Error ? error.message : "Gagal menyimpan layanan ke database.", "error");
       throw error;
     }
   };
 
-  const handleUpdateService = async (updatedSrv: CareerService) => {
+  const handleUpdateService = async (updatedSrv: Partial<CareerService> & { id: string }) => {
     try {
-      const { service } = await updateSellerService(updatedSrv);
-      setSellerServices(sellerServices.map((s) => s.id === service.id ? service : s));
-      setServices(services.map((s) => s.id === service.id ? service : s));
-      triggerToast("Data layanan berhasil diperbarui.", "success");
+      await updateSellerService(updatedSrv);
+      await loadSellerServices();
+      triggerToast("Data layanan berhasil diperbarui dan dimuat ulang dari database.", "success");
     } catch (error) {
       triggerToast(error instanceof Error ? error.message : "Gagal memperbarui layanan di database.", "error");
       throw error;
@@ -404,10 +425,9 @@ export default function App() {
 
   const handleDeleteService = async (id: string) => {
     try {
-      const { service } = await deleteSellerService(id);
-      setSellerServices(sellerServices.map((s) => s.id === id ? service : s));
-      setServices(services.map((s) => s.id === id ? service : s));
-      triggerToast("Layanan karir dinonaktifkan.", "info");
+      await deleteSellerService(id);
+      await loadSellerServices();
+      triggerToast("Layanan berhasil dipindahkan ke arsip.", "info");
     } catch (error) {
       triggerToast(error instanceof Error ? error.message : "Gagal menonaktifkan layanan di database.", "error");
       throw error;
@@ -649,6 +669,9 @@ export default function App() {
             {activeTab === "seller-services" && (
               <ServiceManager
                 services={sellerServices}
+                isLoading={sellerServicesLoading}
+                error={sellerServicesError}
+                onRetry={loadSellerServices}
                 onAddService={handleAddService}
                 onUpdateService={handleUpdateService}
                 onDeleteService={handleDeleteService}
