@@ -102,7 +102,65 @@ export interface SellerEarningsSummary {
   completed_orders: number;
   pending_orders: number;
   gross_revenue: number;
+  platform_commission: number;
+  platform_commission_rate: number;
+  net_revenue: number;
   estimated_net_revenue: number;
+  available_balance: number;
+  held_balance: number;
+  total_withdrawn: number;
+}
+
+export interface SellerEarningHistoryItem {
+  id: string;
+  orderId: string;
+  serviceTitle: string;
+  buyerName: string;
+  date: string;
+  orderStatus: "pending" | "accepted" | "in_progress" | "completed" | "cancelled";
+  status: string;
+  grossAmount: number;
+  platformFee: number;
+  netAmount: number;
+}
+
+export interface SellerPayoutAccount {
+  id: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolderName: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SellerWithdrawal {
+  id: string;
+  payoutAccountId: string;
+  amount: number;
+  status: "pending" | "approved" | "rejected" | "paid";
+  note: string;
+  requestedAt: string;
+  processedAt: string | null;
+  paidAt: string | null;
+  account: null | {
+    bankName: string;
+    accountNumber: string;
+    accountHolderName: string;
+  };
+}
+
+export interface SellerEarningsPayload {
+  earnings: SellerEarningsSummary;
+  history: SellerEarningHistoryItem[];
+  payoutAccounts: SellerPayoutAccount[];
+  withdrawals: SellerWithdrawal[];
+  filters: {
+    period: string;
+    startDate: string;
+    endDate: string;
+    status: string;
+  };
 }
 
 export interface RecruiterStatsSummary {
@@ -154,8 +212,72 @@ export async function updateSellerOrder(payload: {
   });
 }
 
-export async function fetchSellerEarnings() {
-  return apiRequest<{ earnings: SellerEarningsSummary }>("/api/seller/earnings");
+export async function fetchSellerEarnings(filters: { period?: string; status?: string; startDate?: string; endDate?: string } = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  const query = params.toString();
+  return apiRequest<SellerEarningsPayload>(`/api/seller/earnings${query ? `?${query}` : ""}`);
+}
+
+export async function createSellerPayoutAccount(payload: {
+  bankName: string;
+  accountNumber: string;
+  accountHolderName: string;
+}) {
+  return apiRequest<{ payoutAccount: SellerPayoutAccount }>("/api/seller/payout-accounts", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSellerPayoutAccount(payload: Partial<SellerPayoutAccount> & { id: string }) {
+  return apiRequest<{ payoutAccount: SellerPayoutAccount }>("/api/seller/payout-accounts", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteSellerPayoutAccount(id: string) {
+  return apiRequest<{ ok: boolean }>(`/api/seller/payout-accounts?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function createSellerWithdrawal(payload: {
+  payoutAccountId: string;
+  amount: number;
+  note?: string;
+}) {
+  return apiRequest<{ withdrawal: SellerWithdrawal; message: string }>("/api/seller/withdrawals", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function downloadSellerEarningsCsv(filters: { period?: string; status?: string; startDate?: string; endDate?: string } = {}) {
+  const token = getAuthToken();
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  const response = await fetch(`${API_BASE_URL}/api/seller/earnings/export${params.toString() ? `?${params.toString()}` : ""}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    try {
+      const payload = JSON.parse(text);
+      throw new Error(payload.error || "Export laporan gagal.");
+    } catch (error) {
+      if (error instanceof Error && error.message !== text) throw error;
+      throw new Error(text || "Export laporan gagal.");
+    }
+  }
+  return text;
 }
 
 export async function fetchSellerSessions() {
