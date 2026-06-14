@@ -820,6 +820,19 @@ function generateATSResume(payload: any) {
   const experience = Array.isArray(resume.experience) ? resume.experience : [];
   const education = Array.isArray(resume.education) ? resume.education : [];
   const skills = Array.isArray(resume.skills) ? resume.skills : [];
+  const required = [resume.fullName, resume.email, resume.phone, resume.title, resume.summary];
+  const contactScore = required.filter((item: any) => String(item || "").trim()).length * 6;
+  const structureScore =
+    Math.min(experience.length, 3) * 8 +
+    Math.min(education.length, 2) * 6 +
+    (draft.certifications.length ? 4 : 0) +
+    (draft.languages.length ? 4 : 0);
+  const keywordText = `${resume.title || ""} ${resume.summary || ""} ${skills.join(" ")} ${experience.map((item: any) => item.description || "").join(" ")}`.toLowerCase();
+  const keywordMatches = ["react", "typescript", "javascript", "api", "sql", "agile", "lead", "develop", "implement", "improve", "collaborat", "analyt"].filter((word) => keywordText.includes(word)).length;
+  const keywordScore = Math.min(30, skills.length * 2 + keywordMatches * 2);
+  const impactScore = experience.some((item: any) => /\d|%|increased|reduced|improved|optimized/i.test(item.description || "")) ? 10 : 0;
+  const linkScore = resume.website || draft.portfolioLink ? 4 : 0;
+  const atsScore = Math.min(100, contactScore + structureScore + keywordScore + impactScore + linkScore);
 
   return {
     personal: {
@@ -851,7 +864,13 @@ function generateATSResume(payload: any) {
     certifications: draft.certifications,
     languages: draft.languages,
     template: resume.template || "modern",
-    atsScore: Math.min(98, 70 + Math.min(skills.length, 12) * 2 + Math.min(experience.length, 4) * 3),
+    atsScore,
+    scoreBreakdown: [
+      contactScore >= 24 ? "Kontak dan headline lengkap." : "Lengkapi nama, email, telepon, headline, dan summary.",
+      structureScore >= 20 ? "Struktur utama resume sudah terbaca ATS." : "Tambahkan pengalaman, pendidikan, sertifikasi, atau bahasa.",
+      keywordScore >= 22 ? "Keyword relevan cukup kuat." : "Tambahkan skill dan kata kerja yang sesuai target posisi.",
+      impactScore ? "Bullet sudah punya dampak terukur." : "Tambahkan angka, persen, atau hasil bisnis pada bullet pengalaman.",
+    ],
     generatedAt: new Date().toISOString(),
   };
 }
@@ -883,6 +902,159 @@ function suggestResumeKeywords(jobTitle?: string, skills: string[] = []) {
   return Array.from(suggestions).slice(0, 8);
 }
 
+function escapeHtml(value: any) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function renderGeneratedResumeHtml(generated: any) {
+  const template = generated?.template || "modern";
+  const isCorporate = template === "corporate";
+  const isFresh = template === "minimalist";
+  const accent = isCorporate ? "#0f172a" : isFresh ? "#047857" : "#1d4ed8";
+  const fontFamily = isCorporate ? "Georgia, 'Times New Roman', serif" : "Arial, Helvetica, sans-serif";
+  const personal = generated?.personal || {};
+  const contact = [personal.email, personal.phone, personal.location, personal.linkedin, personal.portfolio].filter(Boolean).map(escapeHtml).join(" | ");
+  const section = (title: string, body: string) =>
+    body ? `<section style="margin-top:22px;"><h2 style="margin:0 0 10px;color:${accent};font-size:13px;letter-spacing:.08em;text-transform:uppercase;${isCorporate ? "border-bottom:1px solid #cbd5e1;padding-bottom:4px;" : ""}">${title}</h2>${body}</section>` : "";
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(personal.fullName || "Resume")}</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f8fafc; color: #0f172a; font-family: ${fontFamily}; }
+    main { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 18mm; }
+    h1 { margin: 0; font-size: ${isCorporate ? "28px" : "34px"}; text-transform: ${isCorporate ? "uppercase" : "none"}; letter-spacing: ${isCorporate ? ".08em" : "0"}; }
+    p { margin: 0; line-height: 1.5; }
+    ul { margin: 8px 0 0 18px; padding: 0; }
+    li { margin: 4px 0; line-height: 1.45; }
+    .header { ${isFresh ? `border-left: 5px solid ${accent}; padding-left: 18px;` : isCorporate ? "text-align:center;border-bottom:4px solid #0f172a;padding-bottom:18px;" : "border-bottom:1px solid #bfdbfe;padding-bottom:18px;"} }
+    .title { margin-top: 5px; color: ${accent}; font-weight: 700; }
+    .contact { margin-top: 8px; font-size: 12px; color: #475569; }
+    .item { margin-top: 12px; }
+    .row { display:flex; justify-content:space-between; gap:18px; font-weight:700; }
+    .meta { color:#475569; font-size:12px; white-space:nowrap; }
+    .skills { display:flex; flex-wrap:wrap; gap:6px; }
+    .skill { border:1px solid #cbd5e1; padding:4px 8px; font-size:12px; }
+    @media print { body { background: #fff; } main { width: auto; min-height: auto; margin: 0; padding: 0; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="header">
+      <h1>${escapeHtml(personal.fullName || "Your Name")}</h1>
+      <p class="title">${escapeHtml(personal.title || "Target Role")}</p>
+      <p class="contact">${contact}</p>
+    </header>
+    ${section("Professional Summary", generated?.summary ? `<p>${escapeHtml(generated.summary)}</p>` : "")}
+    ${section(
+      "Experience",
+      (generated?.experience || [])
+        .map((item: any) => `<div class="item"><div class="row"><span>${escapeHtml(item.position || "Role")} - ${escapeHtml(item.company || "Company")}</span><span class="meta">${escapeHtml(item.period)}</span></div><ul>${(item.bullets || []).map((bullet: string) => `<li>${escapeHtml(bullet)}</li>`).join("")}</ul></div>`)
+        .join("")
+    )}
+    ${section(
+      "Education",
+      (generated?.education || [])
+        .map((item: any) => `<div class="item"><div class="row"><span>${escapeHtml(item.degree || "Degree")} - ${escapeHtml(item.school || "School")}</span><span class="meta">${escapeHtml(item.period)}</span></div>${item.details ? `<p>${escapeHtml(item.details)}</p>` : ""}</div>`)
+        .join("")
+    )}
+    ${section("Skills", generated?.skills?.length ? `<div class="skills">${generated.skills.map((skill: string) => `<span class="skill">${escapeHtml(skill)}</span>`).join("")}</div>` : "")}
+    ${section("Certifications", (generated?.certifications || []).map((item: any) => `<p>${escapeHtml(item.name)} - ${escapeHtml(item.issuer)}${item.year ? `, ${escapeHtml(item.year)}` : ""}</p>`).join(""))}
+    ${section("Languages", (generated?.languages || []).map((item: any) => `<p>${escapeHtml(item.lang)} - ${escapeHtml(item.level)}</p>`).join(""))}
+  </main>
+</body>
+</html>`;
+}
+
+function mapResumePurchase(row: any) {
+  const method = row.payment_method || "";
+  const reference = row.payment_reference || "";
+  return {
+    id: row.id,
+    resumeDraftId: row.resume_draft_id,
+    amount: row.amount,
+    adminFee: row.admin_fee || 0,
+    total: (row.amount || 0) + (row.admin_fee || 0),
+    status: row.status,
+    packageId: row.package_id || "pdf-html",
+    formats: Array.isArray(row.formats) ? row.formats : ["pdf", "html"],
+    paymentMethod: method,
+    paymentReference: reference,
+    paymentInstructions: buildPaymentInstructions(method, reference),
+    paymentProvider: row.payment_provider,
+    checkoutUrl: row.checkout_url || "",
+    expiresAt: row.expires_at || null,
+    paidAt: row.paid_at || null,
+    createdAt: row.created_at,
+  };
+}
+
+function normalizeResumePackage(packageId: any) {
+  const id = ["pdf", "pdf-html", "all"].includes(packageId) ? packageId : "pdf-html";
+  if (id === "pdf") return { id, amount: 10000, formats: ["pdf"] };
+  if (id === "all") return { id, amount: 25000, formats: ["pdf", "html"] };
+  return { id: "pdf-html", amount: 15000, formats: ["pdf", "html"] };
+}
+
+function normalizePaymentMethod(method: any) {
+  const value = String(method || "").toLowerCase();
+  return ["qris", "gopay", "ovo", "dana", "shopeepay", "bca-va", "mandiri-va"].includes(value) ? value : "";
+}
+
+function paymentMethodLabel(method: string) {
+  const labels: Record<string, string> = {
+    qris: "QRIS",
+    gopay: "GoPay",
+    ovo: "OVO",
+    dana: "DANA",
+    shopeepay: "ShopeePay",
+    "bca-va": "BCA Virtual Account",
+    "mandiri-va": "Mandiri Virtual Account",
+  };
+  return labels[method] || method;
+}
+
+function paymentReference(method: string) {
+  if (method === "qris") return "SIMULASI-QRIS-KARIRHUB-RESUME";
+  if (method === "bca-va") return "8808123456789012";
+  if (method === "mandiri-va") return "8877123456789012";
+  return `SIM-${method.toUpperCase()}-081234567890`;
+}
+
+function buildPaymentInstructions(method: string, reference: string) {
+  if (!method) return [];
+  if (method === "qris") return ["Simulasi Prototype: scan QRIS demo KarirHub.", `Kode QRIS: ${reference}`, "Klik Simulasikan Pembayaran Berhasil untuk menyelesaikan prototype."];
+  if (method === "bca-va" || method === "mandiri-va") return [`Simulasi Prototype: transfer ke ${paymentMethodLabel(method)}.`, `Nomor VA: ${reference}`, "Klik Simulasikan Pembayaran Berhasil untuk menyelesaikan prototype."];
+  return [`Buka aplikasi ${paymentMethodLabel(method)}.`, `Gunakan kode pembayaran simulasi: ${reference}`, "Klik Simulasikan Pembayaran Berhasil untuk menyelesaikan prototype."];
+}
+
+async function findPaidResumePurchase(userId: string, resumeDraftId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("resume_purchases")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("resume_draft_id", resumeDraftId)
+    .eq("status", "paid")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return { purchase: null, error };
+  return { purchase: data || null, error: null };
+}
+
+async function maybeSetDevelopmentPaymentPaid(purchase: any) {
+  return purchase;
+}
+
 async function handleResumeBuilder(route: string, req: any, res: any) {
   const { user, error: authError } = await requireUser(req, supabaseAdmin);
   if (!user) return sendError(res, 401, authError || "Session tidak valid.");
@@ -897,14 +1069,27 @@ async function handleResumeBuilder(route: string, req: any, res: any) {
       .maybeSingle();
 
     if (error) return sendError(res, 500, "Gagal mengambil draft resume.", error.message);
-    return sendJson(res, 200, { draft: data || null });
+    let purchase = null;
+    if (data?.id) {
+      const { data: purchaseData, error: purchaseError } = await supabaseAdmin
+        .from("resume_purchases")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("resume_draft_id", data.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (purchaseError) return sendError(res, 500, "Gagal mengambil status pembelian resume.", purchaseError.message);
+      purchase = purchaseData ? mapResumePurchase(await maybeSetDevelopmentPaymentPaid(purchaseData)) : null;
+    }
+    return sendJson(res, 200, { draft: data || null, purchase });
   }
 
   if (action === "draft" && (req.method === "POST" || req.method === "PATCH")) {
     const resumeData = normalizeResumePayload(req.body || {});
     const { data, error } = await supabaseAdmin
       .from("resume_drafts")
-      .upsert({ user_id: user.id, resume_data: resumeData })
+      .upsert({ user_id: user.id, resume_data: resumeData }, { onConflict: "user_id" })
       .select("id,resume_data,generated_resume,updated_at")
       .single();
 
@@ -937,7 +1122,7 @@ async function handleResumeBuilder(route: string, req: any, res: any) {
 
     const { data, error } = await supabaseAdmin
       .from("resume_drafts")
-      .upsert({ user_id: user.id, resume_data: draft })
+      .upsert({ user_id: user.id, resume_data: draft }, { onConflict: "user_id" })
       .select("id,resume_data,generated_resume,updated_at")
       .single();
 
@@ -950,12 +1135,168 @@ async function handleResumeBuilder(route: string, req: any, res: any) {
     const generated = generateATSResume(resumeData);
     const { data, error } = await supabaseAdmin
       .from("resume_drafts")
-      .upsert({ user_id: user.id, resume_data: resumeData, generated_resume: generated })
+      .upsert({ user_id: user.id, resume_data: resumeData, generated_resume: generated }, { onConflict: "user_id" })
       .select("id,resume_data,generated_resume,updated_at")
       .single();
 
     if (error || !data) return sendError(res, 500, "Gagal generate resume.", error?.message);
-    return sendJson(res, 200, { generatedResume: generated, draft: data });
+    return sendJson(res, 200, { generatedResume: generated, draft: data, draftId: data.id, resumeId: data.id });
+  }
+
+  if (action === "checkout" && req.method === "POST") {
+    const draftId = req.body?.draftId || req.body?.resumeId;
+    const selectedPackage = normalizeResumePackage(req.body?.packageId);
+    const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
+    if (!paymentMethod) return sendError(res, 400, "Metode pembayaran wajib dipilih.");
+    const { data: draft, error: draftError } = await supabaseAdmin
+      .from("resume_drafts")
+      .select("id,generated_resume")
+      .eq("user_id", user.id)
+      .eq("id", draftId || "")
+      .maybeSingle();
+    if (draftError) return sendError(res, 500, "Gagal membaca resume.", draftError.message);
+    if (!draft) return sendError(res, 404, "Resume tidak ditemukan untuk user ini.");
+    if (!draft.generated_resume) return sendError(res, 400, "Generate resume terlebih dahulu sebelum checkout.");
+
+    const { purchase: paidPurchase, error: paidError } = await findPaidResumePurchase(user.id, draft.id);
+    if (paidError) return sendError(res, 500, "Gagal memeriksa pembelian resume.", paidError.message);
+    if (paidPurchase) return sendJson(res, 200, { purchase: mapResumePurchase(paidPurchase), message: "Resume sudah dibeli dan siap diunduh." });
+
+    const { data: existingPending, error: pendingError } = await supabaseAdmin
+      .from("resume_purchases")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("resume_draft_id", draft.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (pendingError) return sendError(res, 500, "Gagal memeriksa checkout resume.", pendingError.message);
+    if (existingPending) {
+      const { data: updatedPending, error: updatePendingError } = await supabaseAdmin
+        .from("resume_purchases")
+        .update({
+          amount: selectedPackage.amount,
+          admin_fee: Math.ceil(selectedPackage.amount * 0.025),
+          package_id: selectedPackage.id,
+          formats: selectedPackage.formats,
+          payment_method: paymentMethod,
+          payment_reference: paymentReference(paymentMethod),
+          expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        })
+        .eq("id", existingPending.id)
+        .eq("user_id", user.id)
+        .select("*")
+        .single();
+      if (updatePendingError || !updatedPending) return sendError(res, 500, "Gagal memperbarui checkout resume.", updatePendingError?.message);
+      return sendJson(res, 200, {
+        purchase: mapResumePurchase(updatedPending),
+        message: "Checkout resume masih menunggu pembayaran.",
+      });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("resume_purchases")
+      .insert({
+        user_id: user.id,
+        resume_draft_id: draft.id,
+        amount: selectedPackage.amount,
+        admin_fee: Math.ceil(selectedPackage.amount * 0.025),
+        status: "pending",
+        package_id: selectedPackage.id,
+        formats: selectedPackage.formats,
+        payment_method: paymentMethod,
+        payment_reference: paymentReference(paymentMethod),
+        payment_provider: "development-simulator",
+        checkout_url: null,
+        expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      })
+      .select("*")
+      .single();
+    if (error || !data) return sendError(res, 500, "Gagal membuat checkout resume.", error?.message);
+    return sendJson(res, 201, {
+      purchase: mapResumePurchase(data),
+      message: "Checkout development dibuat dengan status pending.",
+    });
+  }
+
+  if (action.startsWith("payment-status/") && req.method === "GET") {
+    const purchaseId = action.replace(/^payment-status\/?/, "");
+    if (!purchaseId) return sendError(res, 400, "ID checkout wajib dikirim.");
+    const { data, error } = await supabaseAdmin
+      .from("resume_purchases")
+      .select("*")
+      .eq("id", purchaseId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error) return sendError(res, 500, "Gagal mengambil status pembayaran.", error.message);
+    if (!data) return sendError(res, 404, "Checkout resume tidak ditemukan.");
+    const purchase = await maybeSetDevelopmentPaymentPaid(data);
+    return sendJson(res, 200, {
+      purchase: mapResumePurchase(purchase),
+      message: purchase.status === "paid" ? "Pembayaran berhasil, resume siap diunduh." : "Menunggu Pembayaran.",
+    });
+  }
+
+  if (action.startsWith("simulate-payment-success/") && req.method === "POST") {
+    const purchaseId = action.replace(/^simulate-payment-success\/?/, "");
+    if (!purchaseId) return sendError(res, 400, "ID checkout wajib dikirim.");
+    const { data: existing, error: readError } = await supabaseAdmin
+      .from("resume_purchases")
+      .select("*")
+      .eq("id", purchaseId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (readError) return sendError(res, 500, "Gagal membaca checkout resume.", readError.message);
+    if (!existing) return sendError(res, 404, "Checkout resume tidak ditemukan.");
+    if (existing.status === "paid") return sendJson(res, 200, { purchase: mapResumePurchase(existing), message: "Pembayaran sudah berhasil." });
+    if (existing.status !== "pending") return sendError(res, 400, "Checkout tidak dalam status pending.");
+
+    const { data, error } = await supabaseAdmin
+      .from("resume_purchases")
+      .update({ status: "paid", paid_at: new Date().toISOString() })
+      .eq("id", purchaseId)
+      .eq("user_id", user.id)
+      .select("*")
+      .single();
+    if (error || !data) return sendError(res, 500, "Gagal mensimulasikan pembayaran.", error?.message);
+    return sendJson(res, 200, { purchase: mapResumePurchase(data), message: "Pembayaran berhasil, resume siap diunduh." });
+  }
+
+  if (action.startsWith("download/") && req.method === "GET") {
+    const purchaseId = action.replace(/^download\/?/, "");
+    const format = String(req.query?.format || "html").toLowerCase();
+    if (!purchaseId) return sendError(res, 400, "ID pembelian wajib dikirim.");
+
+    const { data: purchase, error: purchaseError } = await supabaseAdmin
+      .from("resume_purchases")
+      .select("*")
+      .eq("id", purchaseId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (purchaseError) return sendError(res, 500, "Gagal memeriksa pembelian resume.", purchaseError.message);
+    if (!purchase) return sendError(res, 404, "Pembelian resume tidak ditemukan.");
+    const checkedPurchase = await maybeSetDevelopmentPaymentPaid(purchase);
+    if (checkedPurchase.status !== "paid") return sendError(res, 402, "Resume belum dibayar. Selesaikan pembayaran untuk mengunduh file final.");
+    if (!["pdf", "html"].includes(format)) return sendError(res, 400, "Format download tidak valid.");
+    const allowedFormats = Array.isArray(checkedPurchase.formats) ? checkedPurchase.formats : ["pdf", "html"];
+    if (!allowedFormats.includes(format)) return sendError(res, 403, "Format ini tidak termasuk paket yang dibeli.");
+
+    const { data: draft, error: draftError } = await supabaseAdmin
+      .from("resume_drafts")
+      .select("id,generated_resume")
+      .eq("id", checkedPurchase.resume_draft_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (draftError) return sendError(res, 500, "Gagal membaca resume.", draftError.message);
+    if (!draft || !draft.generated_resume) return sendError(res, 404, "Resume tidak ditemukan untuk user ini.");
+
+    const html = renderGeneratedResumeHtml(draft.generated_resume);
+    const filename = `${String((draft.generated_resume as any)?.personal?.fullName || "resume").replace(/\s+/g, "-").toLowerCase()}-ats.${format === "pdf" ? "html" : "html"}`;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Disposition", `${format === "pdf" ? "inline" : "attachment"}; filename="${filename}"`);
+    res.status(200).send(html);
+    return;
   }
 
   if (action === "enhance" && req.method === "POST") {

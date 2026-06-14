@@ -215,6 +215,7 @@ export async function fetchResumeDraft() {
       generated_resume?: unknown;
       updated_at: string;
     };
+    purchase?: ResumePurchase | null;
   }>("/api/resume-builder/draft");
 }
 
@@ -226,7 +227,7 @@ export async function saveResumeDraft(payload: ResumeDraftPayload) {
 }
 
 export async function generateResume(payload: ResumeDraftPayload) {
-  return apiRequest<{ generatedResume: unknown; draft: { id: string; resume_data: ResumeDraftPayload; updated_at: string } }>("/api/resume-builder/generate", {
+  return apiRequest<{ generatedResume: unknown; draft?: { id: string; resume_data: ResumeDraftPayload; updated_at: string }; draftId?: string; resumeId?: string }>("/api/resume-builder/generate", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -244,6 +245,63 @@ export async function fetchResumeKeywordSuggestions(payload: { jobTitle?: string
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export interface ResumePurchase {
+  id: string;
+  resumeDraftId: string;
+  amount: number;
+  adminFee: number;
+  total: number;
+  status: "pending" | "paid" | "failed";
+  packageId: "pdf" | "pdf-html" | "all";
+  formats: Array<"pdf" | "html">;
+  paymentMethod: string;
+  paymentReference: string;
+  paymentInstructions: string[];
+  paymentProvider: string;
+  checkoutUrl: string;
+  expiresAt: string | null;
+  paidAt: string | null;
+  createdAt: string;
+}
+
+export async function createResumeCheckout(payload: { draftId: string; resumeId?: string; packageId: "pdf" | "pdf-html" | "all"; paymentMethod: string }) {
+  return apiRequest<{ purchase: ResumePurchase; message: string }>("/api/resume-builder/checkout", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchResumePaymentStatus(purchaseId: string) {
+  return apiRequest<{ purchase: ResumePurchase; message: string }>(`/api/resume-builder/payment-status/${encodeURIComponent(purchaseId)}`);
+}
+
+export async function simulateResumePaymentSuccess(purchaseId: string) {
+  return apiRequest<{ purchase: ResumePurchase; message: string }>(`/api/resume-builder/simulate-payment-success/${encodeURIComponent(purchaseId)}`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function downloadResumeExport(purchaseId: string, format: "pdf" | "html") {
+  const token = getAuthToken();
+  const response = await fetch(`${API_BASE_URL}/api/resume-builder/download/${encodeURIComponent(purchaseId)}?format=${encodeURIComponent(format)}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    try {
+      const payload = JSON.parse(text);
+      throw new Error(payload.error || "Download resume gagal.");
+    } catch (error) {
+      if (error instanceof Error && error.message !== text) throw error;
+      throw new Error(text || "Download resume gagal.");
+    }
+  }
+  return text;
 }
 
 export interface ProfileExperience {
