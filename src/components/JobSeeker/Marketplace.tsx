@@ -162,6 +162,7 @@ export const Marketplace: React.FC<MarketplaceProps> = ({ services, onAddTransac
     const paidTx: Transaction = { ...baseTx, status: "Berhasil" };
     const order: ServiceOrder = {
       id: `ORD-${Date.now().toString().slice(-5)}`,
+      serviceId: selectedService.id,
       buyerName: currentUser?.name || "Budi Santoso",
       buyerEmail: currentUser?.email || "budi.santoso@email.com",
       serviceTitle: selectedService.title,

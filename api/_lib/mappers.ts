@@ -37,6 +37,8 @@ export function mapJob(row: any) {
 export function mapOrder(row: any) {
   return {
     id: row.id,
+    serviceId: row.service_id,
+    transactionId: row.transactions?.[0]?.id,
     buyerName: row.buyer_name,
     buyerEmail: row.buyer_email,
     serviceTitle: row.service_title,
@@ -52,6 +54,8 @@ export function mapSellerOrder(row: any) {
   const serviceTitle = row.service_title || row.services?.title || "";
   return {
     id: row.id,
+    serviceId: row.service_id || row.services?.id,
+    transactionId: row.transactions?.[0]?.id,
     buyerName: row.buyer_name,
     buyerEmail: row.buyer_email,
     serviceTitle,

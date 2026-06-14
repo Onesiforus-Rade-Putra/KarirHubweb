@@ -48,7 +48,6 @@ import { clearAuthToken, getCurrentUser } from "./lib/authApi";
 import {
   createApplication,
   createAIPhotoRequest,
-  createOrder,
   createRecruiterJob,
   createTransaction,
   createSellerService,
@@ -108,6 +107,8 @@ export default function App() {
   const [sellerDashboardErrors, setSellerDashboardErrors] = useState<SellerDashboardErrors>({});
   const [sellerServicesLoading, setSellerServicesLoading] = useState(false);
   const [sellerServicesError, setSellerServicesError] = useState<string | null>(null);
+  const [sellerOrdersLoading, setSellerOrdersLoading] = useState(false);
+  const [sellerOrdersError, setSellerOrdersError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ConsultationSession[]>(INITIAL_SESSIONS);
   const [applicants, setApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
   const [recruiterApplicants, setRecruiterApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
@@ -194,6 +195,7 @@ export default function App() {
 
     setSellerDashboardLoading(true);
     setSellerServicesLoading(true);
+    setSellerOrdersLoading(true);
     setSellerDashboardErrors({});
 
     const [servicesResult, ordersResult, earningsResult] = await Promise.allSettled([fetchSellerServices(), fetchSellerOrders(), fetchSellerEarnings()]);
@@ -209,8 +211,10 @@ export default function App() {
 
     if (ordersResult.status === "fulfilled") {
       setSellerOrders(ordersResult.value.orders);
+      setSellerOrdersError(null);
     } else {
       nextErrors.orders = ordersResult.reason instanceof Error ? ordersResult.reason.message : "GET /api/seller/orders gagal.";
+      setSellerOrdersError(nextErrors.orders);
     }
 
     if (earningsResult.status === "fulfilled") {
@@ -222,6 +226,7 @@ export default function App() {
     setSellerDashboardErrors(nextErrors);
     setSellerDashboardLoading(false);
     setSellerServicesLoading(false);
+    setSellerOrdersLoading(false);
   };
 
   const loadSellerServices = async () => {
@@ -238,6 +243,23 @@ export default function App() {
       throw error;
     } finally {
       setSellerServicesLoading(false);
+    }
+  };
+
+  const loadSellerOrders = async () => {
+    if (!currentUser || currentUser.role !== "seller") return;
+
+    setSellerOrdersLoading(true);
+    setSellerOrdersError(null);
+    try {
+      const { orders } = await fetchSellerOrders();
+      setSellerOrders(orders);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "GET /api/seller/orders gagal.";
+      setSellerOrdersError(message);
+      throw error;
+    } finally {
+      setSellerOrdersLoading(false);
     }
   };
 
@@ -337,15 +359,14 @@ export default function App() {
     }
 
     try {
-      const service = services.find((item) => item.title === order.serviceTitle);
-      const { order: savedOrder } = await createOrder({
-        serviceId: service?.id || order.id,
+      const serviceId = order.serviceId || services.find((item) => item.id === order.id)?.id;
+      if (!serviceId) throw new Error("Layanan tidak valid untuk checkout.");
+
+      await createTransaction({
+        serviceId,
         buyerName: order.buyerName,
         buyerEmail: order.buyerEmail,
-        requirements: order.requirements
-      });
-      const { transaction } = await createTransaction({
-        orderId: savedOrder.id,
+        requirements: order.requirements,
         itemTitle: tx.itemTitle,
         category: tx.category,
         price: tx.price,
@@ -353,8 +374,12 @@ export default function App() {
         paymentMethod: tx.paymentMethod
       });
 
-      setTransactions([transaction, ...transactions]);
-      setOrders([savedOrder, ...orders]);
+      const [transactionResult, orderResult] = await Promise.all([fetchTransactions(), fetchOrders()]);
+      setTransactions(transactionResult.transactions);
+      setOrders(orderResult.orders);
+      if (currentUser.role === "seller") {
+        loadSellerOrders().catch(() => undefined);
+      }
       triggerToast(`Transaksi berhasil dikonfirmasi! Pesanan dimasukkan dalam database bimbingan.`, "success");
     } catch (error) {
       triggerToast(error instanceof Error ? error.message : "Gagal menyimpan transaksi.", "error");
@@ -435,17 +460,24 @@ export default function App() {
   };
 
   // Seller Order status management
-  const handleUpdateOrderStatus = async (orderId: string, status: ServiceOrder["status"], resultUrl?: string) => {
-    const orderStatus = status === "Baru" ? "pending" : status === "Sedang Diproses" ? "in_progress" : status === "Selesai" ? "completed" : "cancelled";
-
+  const handleUpdateOrderStatus = async (payload: {
+    orderId: string;
+    orderStatus: "pending" | "accepted" | "in_progress" | "completed" | "cancelled";
+    sellerNotes?: string;
+    resultUrl?: string;
+  }) => {
     try {
-      const { order } = await updateSellerOrder({ id: orderId, orderStatus, resultUrl });
-      setSellerOrders(sellerOrders.map((o) => o.id === orderId ? order : o));
-      setOrders(orders.map((o) => o.id === orderId ? { ...o, status, resultUrl } : o));
+      await updateSellerOrder({
+        id: payload.orderId,
+        orderStatus: payload.orderStatus,
+        sellerNotes: payload.sellerNotes,
+        resultUrl: payload.resultUrl,
+      });
+      await loadSellerOrders();
       fetchSellerEarnings().then(({ earnings }) => setSellerEarnings(earnings)).catch(() => undefined);
-      triggerToast(`Pesanan ${orderId} diperbarui menjadi status: ${status}`, "success");
+      triggerToast(`Pesanan ${payload.orderId} berhasil diperbarui dari database.`, "success");
     } catch (error) {
-      triggerToast(error instanceof Error ? error.message : `Gagal memperbarui pesanan ${orderId}.`, "error");
+      triggerToast(error instanceof Error ? error.message : `Gagal memperbarui pesanan ${payload.orderId}.`, "error");
       throw error;
     }
   };
@@ -681,6 +713,9 @@ export default function App() {
             {activeTab === "seller-orders" && (
               <OrderManager
                 orders={sellerOrders}
+                isLoading={sellerOrdersLoading}
+                error={sellerOrdersError}
+                onRetry={loadSellerOrders}
                 onUpdateOrderStatus={handleUpdateOrderStatus}
               />
             )}

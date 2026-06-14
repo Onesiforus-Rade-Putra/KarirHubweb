@@ -7,8 +7,8 @@ import { supabaseAdmin, supabaseAnon } from "./_lib/supabase.js";
 const serviceSelect = "id,title,provider_name,provider_avatar,category,rating,reviews_count,price,duration,description,active,status,seller_id,created_at";
 const publicServiceSelect = "id,title,provider_name,provider_avatar,category,rating,reviews_count,price,duration,description,active";
 const jobSelect = "id,title,company,company_logo,location,type,salary_min,salary_max,description,requirements,benefits,posted_date,category,applicants_count,status,recruiter_id,created_at";
-const orderSelect = "id,buyer_name,buyer_email,service_title,service_price,requirements,status,result_url,created_at";
-const sellerOrderSelect = "id,buyer_name,buyer_email,service_title,service_price,requirements,status,order_status,seller_notes,result_url,created_at,services!inner(id,title,seller_id)";
+const orderSelect = "id,service_id,buyer_name,buyer_email,service_title,service_price,requirements,status,result_url,created_at";
+const sellerOrderSelect = "id,service_id,buyer_name,buyer_email,service_title,service_price,requirements,status,order_status,seller_notes,result_url,created_at,services!inner(id,title,seller_id)";
 const appSelect = "id,user_id,job_id,candidate_name,candidate_title,candidate_email,candidate_rating,candidate_experience,status,application_status,recruiter_notes,resume_summary,created_at,jobs!inner(id,title,recruiter_id)";
 
 function sellerRequestContext(req: any, user?: any, profile?: any) {
@@ -799,6 +799,97 @@ async function handleOrders(req: any, res: any) {
   return sendError(res, 405, "Method not allowed");
 }
 
+async function ensureServiceOrderForTransaction(transaction: any, payload: any, user: any) {
+  if (payload.category !== "service" || payload.status !== "Berhasil") {
+    return { order: null, error: null };
+  }
+
+  if (transaction.order_id) {
+    const { data: existingOrder, error: existingError } = await supabaseAdmin
+      .from("orders")
+      .select(`${orderSelect},order_status,seller_notes`)
+      .eq("id", transaction.order_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (existingError) return { order: null, error: existingError };
+    if (existingOrder) {
+      console.log("[checkout service order sync]", {
+        transaction_id: transaction.id,
+        order_id: existingOrder.id,
+        service_id: existingOrder.service_id,
+        seller_id: null,
+        user_id: user.id,
+        reused: true,
+      });
+      return { order: existingOrder, error: null };
+    }
+  }
+
+  const serviceId = payload.serviceId;
+  if (!serviceId) return { order: null, error: { message: "serviceId wajib dikirim untuk transaksi service." } };
+
+  const { data: service, error: serviceError } = await supabaseAdmin
+    .from("services")
+    .select("id,title,price,seller_id,active,status")
+    .eq("id", serviceId)
+    .maybeSingle();
+  if (serviceError) return { order: null, error: serviceError };
+  if (!service || service.active === false || service.status === "inactive") {
+    return { order: null, error: { message: "Layanan tidak ditemukan atau tidak aktif." } };
+  }
+
+  const orderId = transaction.id;
+  const { data: existingByTransactionId, error: readOrderError } = await supabaseAdmin
+    .from("orders")
+    .select(`${orderSelect},order_status,seller_notes`)
+    .eq("id", orderId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (readOrderError) return { order: null, error: readOrderError };
+
+  let order = existingByTransactionId;
+  if (!order) {
+    const { data: insertedOrder, error: insertOrderError } = await supabaseAdmin
+      .from("orders")
+      .insert({
+        id: orderId,
+        user_id: user.id,
+        service_id: service.id,
+        buyer_name: payload.buyerName || user.user_metadata?.full_name || user.email || "KarirHub User",
+        buyer_email: payload.buyerEmail || user.email || "",
+        service_title: service.title,
+        service_price: service.price,
+        requirements: payload.requirements || "Pesanan dibuat dari checkout Jasa Karir.",
+        status: "Baru",
+        order_status: "pending",
+      })
+      .select(`${orderSelect},order_status,seller_notes`)
+      .single();
+    if (insertOrderError || !insertedOrder) return { order: null, error: insertOrderError || { message: "Order gagal dibuat." } };
+    order = insertedOrder;
+  }
+
+  if (transaction.order_id !== order.id) {
+    const { error: linkError } = await supabaseAdmin
+      .from("transactions")
+      .update({ order_id: order.id })
+      .eq("id", transaction.id)
+      .eq("user_id", user.id);
+    if (linkError) return { order: null, error: linkError };
+  }
+
+  console.log("[checkout service order sync]", {
+    transaction_id: transaction.id,
+    order_id: order.id,
+    service_id: service.id,
+    seller_id: service.seller_id,
+    user_id: user.id,
+    reused: Boolean(existingByTransactionId),
+  });
+
+  return { order, error: null };
+}
+
 async function handleTransactions(req: any, res: any) {
   const { user, error: authError } = await requireUser(req, supabaseAdmin);
   if (!user) return sendError(res, 401, authError || "Session tidak valid.");
@@ -810,7 +901,7 @@ async function handleTransactions(req: any, res: any) {
   }
 
   if (req.method === "POST") {
-    const { orderId, itemTitle, category = "service", price, status = "Pending", paymentMethod } = req.body || {};
+    const { orderId, serviceId, buyerName, buyerEmail, requirements, itemTitle, category = "service", price, status = "Pending", paymentMethod } = req.body || {};
     if (!itemTitle || typeof price !== "number") return sendError(res, 400, "itemTitle dan price wajib dikirim.");
 
     if (orderId) {
@@ -821,11 +912,28 @@ async function handleTransactions(req: any, res: any) {
     const { data, error } = await supabaseAdmin
       .from("transactions")
       .insert({ user_id: user.id, order_id: orderId || null, item_title: itemTitle, category, price, status, payment_method: paymentMethod || "QRIS", va_number: virtualAccount(paymentMethod) })
-      .select("id,item_title,category,price,status,payment_method,va_number,created_at")
+      .select("id,order_id,item_title,category,price,status,payment_method,va_number,created_at")
       .single();
 
     if (error || !data) return sendError(res, 500, "Gagal membuat transaksi.", error?.message);
-    return sendJson(res, 201, { transaction: mapTransaction(data) });
+
+    const { order, error: orderSyncError } = await ensureServiceOrderForTransaction(
+      data,
+      { serviceId, buyerName, buyerEmail, requirements, category, status },
+      user
+    );
+    if (orderSyncError) {
+      logSellerEndpointError("POST /api/transactions service order sync", orderSyncError, {
+        transaction_id: data.id,
+        order_id: data.order_id,
+        service_id: serviceId,
+        seller_id: null,
+        user_id: user.id,
+      });
+      return sendError(res, 500, "Transaksi tersimpan, tetapi gagal membuat pesanan seller.", supabaseErrorDetail(orderSyncError));
+    }
+
+    return sendJson(res, 201, { transaction: mapTransaction(data), order: order ? mapOrder(order) : null });
   }
 
   return sendError(res, 405, "Method not allowed");

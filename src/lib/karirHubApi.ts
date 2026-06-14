@@ -54,6 +54,10 @@ export async function fetchTransactions() {
 
 export async function createTransaction(payload: {
   orderId?: string;
+  serviceId?: string;
+  buyerName?: string;
+  buyerEmail?: string;
+  requirements?: string;
   itemTitle: string;
   category: Transaction["category"];
   price: number;
