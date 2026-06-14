@@ -9,6 +9,8 @@ const publicServiceSelect = "id,title,provider_name,provider_avatar,category,rat
 const jobSelect = "id,title,company,company_logo,location,type,salary_min,salary_max,description,requirements,benefits,posted_date,category,applicants_count,status,recruiter_id,created_at";
 const orderSelect = "id,service_id,buyer_name,buyer_email,service_title,service_price,requirements,status,result_url,created_at";
 const sellerOrderSelect = "id,service_id,buyer_name,buyer_email,service_title,service_price,requirements,status,order_status,seller_notes,result_url,created_at,services!inner(id,title,seller_id)";
+const sellerSessionSelect = "id,order_id,seller_id,service_id,buyer_user_id,client_name,client_email,service_title,scheduled_date,start_time,end_time,status,seller_notes,rejection_reason,meeting_url,created_at,updated_at";
+const sellerAvailabilitySelect = "id,seller_id,day_of_week,start_time,end_time,active,created_at,updated_at";
 const appSelect = "id,user_id,job_id,candidate_name,candidate_title,candidate_email,candidate_rating,candidate_experience,status,application_status,recruiter_notes,resume_summary,created_at,jobs!inner(id,title,recruiter_id)";
 
 function sellerRequestContext(req: any, user?: any, profile?: any) {
@@ -1096,6 +1098,252 @@ async function handleSellerOrders(req: any, res: any) {
   return sendError(res, 405, "Method not allowed");
 }
 
+function mapSellerSession(row: any) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    sellerId: row.seller_id,
+    serviceId: row.service_id,
+    buyerUserId: row.buyer_user_id,
+    clientName: row.client_name,
+    clientEmail: row.client_email,
+    serviceTitle: row.service_title,
+    scheduledDate: row.scheduled_date || "",
+    startTime: row.start_time || "",
+    endTime: row.end_time || "",
+    status: row.status,
+    sellerNotes: row.seller_notes || "",
+    rejectionReason: row.rejection_reason || "",
+    meetingUrl: row.meeting_url || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapSellerAvailability(row: any) {
+  return {
+    id: row.id,
+    sellerId: row.seller_id,
+    dayOfWeek: row.day_of_week,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    active: row.active !== false,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function isSellerSessionStatus(value: any) {
+  return ["pending", "confirmed", "rejected", "rescheduled", "completed", "cancelled"].includes(value);
+}
+
+async function syncSellerConsultationSessions(userId: string) {
+  const { data: orders, error: ordersError } = await supabaseAdmin
+    .from("orders")
+    .select("id,user_id,service_id,buyer_name,buyer_email,service_title,services!inner(id,title,seller_id,category)")
+    .eq("services.seller_id", userId)
+    .in("services.category", ["consulting", "mock-interview"]);
+  if (ordersError) return ordersError;
+
+  const orderIds = (orders || []).map((order: any) => order.id);
+  if (!orderIds.length) return null;
+
+  const { data: existing, error: existingError } = await supabaseAdmin
+    .from("seller_consultation_sessions")
+    .select("order_id")
+    .eq("seller_id", userId)
+    .in("order_id", orderIds);
+  if (existingError) return existingError;
+
+  const existingOrderIds = new Set((existing || []).map((item: any) => item.order_id));
+  const missingRows = (orders || [])
+    .filter((order: any) => !existingOrderIds.has(order.id))
+    .map((order: any) => ({
+      order_id: order.id,
+      seller_id: userId,
+      service_id: order.service_id,
+      buyer_user_id: order.user_id,
+      client_name: order.buyer_name,
+      client_email: order.buyer_email || "",
+      service_title: order.service_title || order.services?.title || "Konsultasi Karir",
+      status: "pending",
+    }));
+
+  if (!missingRows.length) return null;
+
+  const { error: insertError } = await supabaseAdmin.from("seller_consultation_sessions").insert(missingRows);
+  return insertError || null;
+}
+
+async function readSellerSessions(userId: string) {
+  const syncError = await syncSellerConsultationSessions(userId);
+  if (syncError) return { data: null, error: syncError };
+
+  const { data, error } = await supabaseAdmin
+    .from("seller_consultation_sessions")
+    .select(sellerSessionSelect)
+    .eq("seller_id", userId)
+    .order("scheduled_date", { ascending: true, nullsFirst: false })
+    .order("start_time", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: false });
+  return { data: data || [], error };
+}
+
+async function handleSellerSessions(req: any, res: any) {
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
+  if (!user || !profile) return sendError(res, status, error || "Akses ditolak.");
+
+  if (req.method === "GET") {
+    const { data, error: queryError } = await readSellerSessions(user.id);
+    if (queryError) {
+      logSellerEndpointError("GET /api/seller/sessions", queryError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "GET /api/seller/sessions gagal mengambil jadwal seller.", supabaseErrorDetail(queryError));
+    }
+    return sendJson(res, 200, { sessions: (data || []).map(mapSellerSession) });
+  }
+
+  if (req.method === "PATCH") {
+    const { id, status: nextStatus, sellerNotes, rejectionReason, scheduledDate, startTime, endTime, meetingUrl } = req.body || {};
+    if (!id) return sendError(res, 400, "id sesi wajib dikirim.");
+    const updates: any = {};
+    if (nextStatus !== undefined) {
+      if (!isSellerSessionStatus(nextStatus)) return sendError(res, 400, "Status sesi tidak valid.");
+      updates.status = nextStatus;
+    }
+    if (sellerNotes !== undefined) updates.seller_notes = sellerNotes || null;
+    if (rejectionReason !== undefined) updates.rejection_reason = rejectionReason || null;
+    if (scheduledDate !== undefined) updates.scheduled_date = scheduledDate || null;
+    if (startTime !== undefined) updates.start_time = startTime || null;
+    if (endTime !== undefined) updates.end_time = endTime || null;
+    if (meetingUrl !== undefined) updates.meeting_url = meetingUrl || null;
+
+    const { data, error: updateError } = await supabaseAdmin
+      .from("seller_consultation_sessions")
+      .update(updates)
+      .eq("id", id)
+      .eq("seller_id", user.id)
+      .select(sellerSessionSelect)
+      .single();
+    if (updateError || !data) {
+      logSellerEndpointError("PATCH /api/seller/sessions", updateError, sellerRequestContext(req, user, profile));
+      return sendError(res, 404, "PATCH /api/seller/sessions gagal mengupdate sesi seller.", supabaseErrorDetail(updateError));
+    }
+    return sendJson(res, 200, { session: mapSellerSession(data) });
+  }
+
+  return sendError(res, 405, "Method not allowed");
+}
+
+async function handleSellerSessionReschedule(req: any, res: any, sessionId: string) {
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
+  if (!user || !profile) return sendError(res, status, error || "Akses ditolak.");
+  if (req.method !== "POST") return sendError(res, 405, "Method not allowed");
+
+  const { scheduledDate, startTime, endTime, sellerNotes } = req.body || {};
+  if (!sessionId || !scheduledDate || !startTime || !endTime) return sendError(res, 400, "scheduledDate, startTime, dan endTime wajib dikirim.");
+
+  const { data, error: updateError } = await supabaseAdmin
+    .from("seller_consultation_sessions")
+    .update({
+      scheduled_date: scheduledDate,
+      start_time: startTime,
+      end_time: endTime,
+      seller_notes: sellerNotes || null,
+      status: "rescheduled",
+    })
+    .eq("id", sessionId)
+    .eq("seller_id", user.id)
+    .select(sellerSessionSelect)
+    .single();
+  if (updateError || !data) {
+    logSellerEndpointError("POST /api/seller/sessions/:id/reschedule", updateError, sellerRequestContext(req, user, profile));
+    return sendError(res, 404, "Gagal reschedule sesi seller.", supabaseErrorDetail(updateError));
+  }
+  return sendJson(res, 200, { session: mapSellerSession(data) });
+}
+
+async function handleSellerSessionMeetingLink(req: any, res: any, sessionId: string) {
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
+  if (!user || !profile) return sendError(res, status, error || "Akses ditolak.");
+  if (req.method !== "PATCH") return sendError(res, 405, "Method not allowed");
+
+  const { meetingUrl } = req.body || {};
+  if (!sessionId || !meetingUrl) return sendError(res, 400, "meetingUrl wajib dikirim.");
+
+  const { data, error: updateError } = await supabaseAdmin
+    .from("seller_consultation_sessions")
+    .update({ meeting_url: meetingUrl })
+    .eq("id", sessionId)
+    .eq("seller_id", user.id)
+    .select(sellerSessionSelect)
+    .single();
+  if (updateError || !data) {
+    logSellerEndpointError("PATCH /api/seller/sessions/:id/meeting-link", updateError, sellerRequestContext(req, user, profile));
+    return sendError(res, 404, "Gagal menyimpan link meeting.", supabaseErrorDetail(updateError));
+  }
+  return sendJson(res, 200, { session: mapSellerSession(data) });
+}
+
+async function handleSellerAvailability(req: any, res: any) {
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
+  if (!user || !profile) return sendError(res, status, error || "Akses ditolak.");
+
+  if (req.method === "GET") {
+    const { data, error: queryError } = await supabaseAdmin
+      .from("seller_availability")
+      .select(sellerAvailabilitySelect)
+      .eq("seller_id", user.id)
+      .order("day_of_week", { ascending: true })
+      .order("start_time", { ascending: true });
+    if (queryError) {
+      logSellerEndpointError("GET /api/seller/availability", queryError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "GET /api/seller/availability gagal mengambil ketersediaan seller.", supabaseErrorDetail(queryError));
+    }
+    return sendJson(res, 200, { availability: (data || []).map(mapSellerAvailability) });
+  }
+
+  if (req.method === "POST") {
+    const { dayOfWeek, startTime, endTime, active = true } = req.body || {};
+    if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6 || !startTime || !endTime) {
+      return sendError(res, 400, "dayOfWeek, startTime, dan endTime wajib dikirim.");
+    }
+    const { data, error: insertError } = await supabaseAdmin
+      .from("seller_availability")
+      .insert({ seller_id: user.id, day_of_week: dayOfWeek, start_time: startTime, end_time: endTime, active: Boolean(active) })
+      .select(sellerAvailabilitySelect)
+      .single();
+    if (insertError || !data) {
+      logSellerEndpointError("POST /api/seller/availability", insertError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "POST /api/seller/availability gagal menyimpan ketersediaan.", supabaseErrorDetail(insertError));
+    }
+    return sendJson(res, 201, { availability: mapSellerAvailability(data) });
+  }
+
+  if (req.method === "PATCH") {
+    const { id, dayOfWeek, startTime, endTime, active } = req.body || {};
+    if (!id) return sendError(res, 400, "id ketersediaan wajib dikirim.");
+    const updates: any = {};
+    if (dayOfWeek !== undefined) updates.day_of_week = dayOfWeek;
+    if (startTime !== undefined) updates.start_time = startTime;
+    if (endTime !== undefined) updates.end_time = endTime;
+    if (active !== undefined) updates.active = Boolean(active);
+    const { data, error: updateError } = await supabaseAdmin
+      .from("seller_availability")
+      .update(updates)
+      .eq("id", id)
+      .eq("seller_id", user.id)
+      .select(sellerAvailabilitySelect)
+      .single();
+    if (updateError || !data) {
+      logSellerEndpointError("PATCH /api/seller/availability", updateError, sellerRequestContext(req, user, profile));
+      return sendError(res, 404, "PATCH /api/seller/availability gagal mengupdate ketersediaan.", supabaseErrorDetail(updateError));
+    }
+    return sendJson(res, 200, { availability: mapSellerAvailability(data) });
+  }
+
+  return sendError(res, 405, "Method not allowed");
+}
+
 async function handleSellerEarnings(req: any, res: any) {
   const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
   if (!user) return sendError(res, status, error || "Akses ditolak.");
@@ -1761,6 +2009,28 @@ export default async function handler(req: any, res: any) {
     if (route === "seller/orders") {
       logRouteSelection(req, route, "handleSellerOrders");
       return handleSellerOrders(req, res);
+    }
+    if (route === "seller/sessions") {
+      logRouteSelection(req, route, "handleSellerSessions");
+      return handleSellerSessions(req, res);
+    }
+    {
+      const rescheduleMatch = route.match(/^seller\/sessions\/([^/]+)\/reschedule$/);
+      if (rescheduleMatch) {
+        logRouteSelection(req, route, "handleSellerSessionReschedule");
+        return handleSellerSessionReschedule(req, res, decodeURIComponent(rescheduleMatch[1]));
+      }
+    }
+    {
+      const meetingLinkMatch = route.match(/^seller\/sessions\/([^/]+)\/meeting-link$/);
+      if (meetingLinkMatch) {
+        logRouteSelection(req, route, "handleSellerSessionMeetingLink");
+        return handleSellerSessionMeetingLink(req, res, decodeURIComponent(meetingLinkMatch[1]));
+      }
+    }
+    if (route === "seller/availability") {
+      logRouteSelection(req, route, "handleSellerAvailability");
+      return handleSellerAvailability(req, res);
     }
     if (route === "seller/earnings") {
       logRouteSelection(req, route, "handleSellerEarnings");

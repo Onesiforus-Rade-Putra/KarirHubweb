@@ -1,4 +1,4 @@
-import { Applicant, Candidate, CareerService, Job, ResumeData, ServiceOrder, Transaction } from "../types";
+import { Applicant, Candidate, CareerService, ConsultationSession, Job, ResumeData, SellerAvailability, ServiceOrder, Transaction } from "../types";
 import { getAuthToken } from "./authApi";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
@@ -156,6 +156,63 @@ export async function updateSellerOrder(payload: {
 
 export async function fetchSellerEarnings() {
   return apiRequest<{ earnings: SellerEarningsSummary }>("/api/seller/earnings");
+}
+
+export async function fetchSellerSessions() {
+  return apiRequest<{ sessions: ConsultationSession[] }>("/api/seller/sessions");
+}
+
+export async function updateSellerSession(payload: {
+  id: string;
+  status?: "pending" | "confirmed" | "rejected" | "rescheduled" | "completed" | "cancelled";
+  sellerNotes?: string;
+  rejectionReason?: string;
+  scheduledDate?: string;
+  startTime?: string;
+  endTime?: string;
+  meetingUrl?: string;
+}) {
+  return apiRequest<{ session: ConsultationSession }>("/api/seller/sessions", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function rescheduleSellerSession(sessionId: string, payload: {
+  scheduledDate: string;
+  startTime: string;
+  endTime: string;
+  sellerNotes?: string;
+}) {
+  return apiRequest<{ session: ConsultationSession }>(`/api/seller/sessions/${encodeURIComponent(sessionId)}/reschedule`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSellerSessionMeetingLink(sessionId: string, meetingUrl: string) {
+  return apiRequest<{ session: ConsultationSession }>(`/api/seller/sessions/${encodeURIComponent(sessionId)}/meeting-link`, {
+    method: "PATCH",
+    body: JSON.stringify({ meetingUrl }),
+  });
+}
+
+export async function fetchSellerAvailability() {
+  return apiRequest<{ availability: SellerAvailability[] }>("/api/seller/availability");
+}
+
+export async function createSellerAvailability(payload: Omit<SellerAvailability, "id">) {
+  return apiRequest<{ availability: SellerAvailability }>("/api/seller/availability", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSellerAvailability(payload: Partial<SellerAvailability> & { id: string }) {
+  return apiRequest<{ availability: SellerAvailability }>("/api/seller/availability", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function fetchRecruiterJobs() {

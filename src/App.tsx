@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from "react";
-import { UserRole, Job, Candidate, CareerService, Transaction, ServiceOrder, ConsultationSession, Applicant } from "./types";
+import { UserRole, Job, Candidate, CareerService, Transaction, ServiceOrder, ConsultationSession, Applicant, SellerAvailability } from "./types";
 import {
   INITIAL_JOBS,
   INITIAL_CANDIDATES,
   INITIAL_SERVICES,
   INITIAL_TRANSACTIONS,
   INITIAL_ORDERS,
-  INITIAL_SESSIONS,
   INITIAL_APPLICANTS
 } from "./data/mockData";
 
@@ -60,17 +59,24 @@ import {
   fetchRecruiterJobs,
   fetchRecruiterStats,
   fetchRecruiterTalentPool,
+  fetchSellerAvailability,
   fetchSellerEarnings,
   fetchSellerOrders,
   fetchSellerServices,
+  fetchSellerSessions,
   fetchServices,
   fetchTransactions,
   RecruiterStatsSummary,
   SellerEarningsSummary,
+  createSellerAvailability,
+  rescheduleSellerSession,
   updateRecruiterApplicant,
   updateRecruiterJob,
+  updateSellerAvailability,
   updateSellerOrder,
-  updateSellerService
+  updateSellerService,
+  updateSellerSession,
+  updateSellerSessionMeetingLink
 } from "./lib/karirHubApi";
 
 const SAVED_JOBS_STORAGE_KEY = "karirhub_saved_jobs";
@@ -109,7 +115,10 @@ export default function App() {
   const [sellerServicesError, setSellerServicesError] = useState<string | null>(null);
   const [sellerOrdersLoading, setSellerOrdersLoading] = useState(false);
   const [sellerOrdersError, setSellerOrdersError] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<ConsultationSession[]>(INITIAL_SESSIONS);
+  const [sessions, setSessions] = useState<ConsultationSession[]>([]);
+  const [sellerAvailability, setSellerAvailability] = useState<SellerAvailability[]>([]);
+  const [sellerScheduleLoading, setSellerScheduleLoading] = useState(false);
+  const [sellerScheduleError, setSellerScheduleError] = useState<string | null>(null);
   const [applicants, setApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
   const [recruiterApplicants, setRecruiterApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
   const [recruiterStats, setRecruiterStats] = useState<RecruiterStatsSummary | null>(null);
@@ -263,10 +272,29 @@ export default function App() {
     }
   };
 
+  const loadSellerSchedule = async () => {
+    if (!currentUser || currentUser.role !== "seller") return;
+
+    setSellerScheduleLoading(true);
+    setSellerScheduleError(null);
+    try {
+      const [sessionResult, availabilityResult] = await Promise.all([fetchSellerSessions(), fetchSellerAvailability()]);
+      setSessions(sessionResult.sessions);
+      setSellerAvailability(availabilityResult.availability);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "GET /api/seller/sessions gagal.";
+      setSellerScheduleError(message);
+      throw error;
+    } finally {
+      setSellerScheduleLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!currentUser || currentUser.role !== "seller") return;
 
     loadSellerDashboard();
+    loadSellerSchedule().catch(() => undefined);
   }, [currentUser]);
 
   useEffect(() => {
@@ -482,9 +510,61 @@ export default function App() {
     }
   };
 
-  const handleUpdateSessionStatus = (sesId: string, status: ConsultationSession["status"]) => {
-    setSessions(sessions.map((s) => s.id === sesId ? { ...s, status } : s));
-    triggerToast("Jadwal janji pertemuan ditandai selesai.", "success");
+  const handleUpdateSessionStatus = async (payload: {
+    id: string;
+    status?: "pending" | "confirmed" | "rejected" | "rescheduled" | "completed" | "cancelled";
+    sellerNotes?: string;
+    rejectionReason?: string;
+    scheduledDate?: string;
+    startTime?: string;
+    endTime?: string;
+    meetingUrl?: string;
+  }) => {
+    try {
+      await updateSellerSession(payload);
+      await loadSellerSchedule();
+      triggerToast("Jadwal konsultasi berhasil diperbarui.", "success");
+    } catch (error) {
+      triggerToast(error instanceof Error ? error.message : "Gagal memperbarui jadwal konsultasi.", "error");
+      throw error;
+    }
+  };
+
+  const handleRescheduleSession = async (id: string, payload: { scheduledDate: string; startTime: string; endTime: string; sellerNotes?: string }) => {
+    try {
+      await rescheduleSellerSession(id, payload);
+      await loadSellerSchedule();
+      triggerToast("Jadwal konsultasi berhasil di-reschedule.", "success");
+    } catch (error) {
+      triggerToast(error instanceof Error ? error.message : "Gagal reschedule jadwal konsultasi.", "error");
+      throw error;
+    }
+  };
+
+  const handleSaveMeetingLink = async (id: string, meetingUrl: string) => {
+    try {
+      await updateSellerSessionMeetingLink(id, meetingUrl);
+      await loadSellerSchedule();
+      triggerToast("Link meeting berhasil disimpan.", "success");
+    } catch (error) {
+      triggerToast(error instanceof Error ? error.message : "Gagal menyimpan link meeting.", "error");
+      throw error;
+    }
+  };
+
+  const handleSaveAvailability = async (payload: Omit<SellerAvailability, "id"> | SellerAvailability) => {
+    try {
+      if ("id" in payload && payload.id) {
+        await updateSellerAvailability(payload);
+      } else {
+        await createSellerAvailability(payload);
+      }
+      await loadSellerSchedule();
+      triggerToast("Ketersediaan seller berhasil disimpan.", "success");
+    } catch (error) {
+      triggerToast(error instanceof Error ? error.message : "Gagal menyimpan ketersediaan seller.", "error");
+      throw error;
+    }
   };
 
   // Tarik Saldo
@@ -723,7 +803,14 @@ export default function App() {
             {activeTab === "seller-schedule" && (
               <ConsultationScheduler
                 sessions={sessions}
+                availability={sellerAvailability}
+                isLoading={sellerScheduleLoading}
+                error={sellerScheduleError}
+                onRetry={loadSellerSchedule}
                 onUpdateSessionStatus={handleUpdateSessionStatus}
+                onRescheduleSession={handleRescheduleSession}
+                onSaveMeetingLink={handleSaveMeetingLink}
+                onSaveAvailability={handleSaveAvailability}
               />
             )}
 
