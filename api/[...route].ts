@@ -11,6 +11,8 @@ const orderSelect = "id,service_id,buyer_name,buyer_email,service_title,service_
 const sellerOrderSelect = "id,service_id,buyer_name,buyer_email,service_title,service_price,requirements,status,order_status,seller_notes,result_url,created_at,services!inner(id,title,seller_id)";
 const sellerSessionSelect = "id,order_id,seller_id,service_id,buyer_user_id,client_name,client_email,service_title,scheduled_date,start_time,end_time,status,seller_notes,rejection_reason,meeting_url,created_at,updated_at";
 const sellerAvailabilitySelect = "id,seller_id,day_of_week,start_time,end_time,active,created_at,updated_at";
+const sellerPayoutAccountSelect = "id,seller_id,bank_name,account_number,account_holder_name,active,created_at,updated_at";
+const sellerWithdrawalSelect = "id,seller_id,payout_account_id,amount,status,note,requested_at,processed_at,paid_at,created_at,updated_at,seller_payout_accounts(bank_name,account_number,account_holder_name)";
 const appSelect = "id,user_id,job_id,candidate_name,candidate_title,candidate_email,candidate_rating,candidate_experience,status,application_status,recruiter_notes,resume_summary,created_at,jobs!inner(id,title,recruiter_id)";
 
 function sellerRequestContext(req: any, user?: any, profile?: any) {
@@ -1344,22 +1346,313 @@ async function handleSellerAvailability(req: any, res: any) {
   return sendError(res, 405, "Method not allowed");
 }
 
+const PLATFORM_COMMISSION_RATE = 0.1;
+
+function toMoney(value: unknown) {
+  return Math.max(0, Math.round(Number(value) || 0));
+}
+
+function withdrawalAffectsBalance(status: string) {
+  return status === "pending" || status === "approved" || status === "paid";
+}
+
+function mapSellerPayoutAccount(row: any) {
+  return {
+    id: row.id,
+    bankName: row.bank_name,
+    accountNumber: row.account_number,
+    accountHolderName: row.account_holder_name,
+    active: row.active !== false,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapSellerWithdrawal(row: any) {
+  return {
+    id: row.id,
+    payoutAccountId: row.payout_account_id,
+    amount: row.amount,
+    status: row.status,
+    note: row.note || "",
+    requestedAt: row.requested_at,
+    processedAt: row.processed_at || null,
+    paidAt: row.paid_at || null,
+    account: row.seller_payout_accounts
+      ? {
+          bankName: row.seller_payout_accounts.bank_name,
+          accountNumber: row.seller_payout_accounts.account_number,
+          accountHolderName: row.seller_payout_accounts.account_holder_name,
+        }
+      : null,
+  };
+}
+
+function mapSellerEarningOrder(row: any) {
+  const grossAmount = toMoney(row.service_price);
+  const platformFee = Math.round(grossAmount * PLATFORM_COMMISSION_RATE);
+  return {
+    id: row.id,
+    orderId: row.id,
+    serviceTitle: row.service_title || row.services?.title || "Layanan KarirHub",
+    buyerName: row.buyer_name || "",
+    date: row.created_at?.slice(0, 10) || "",
+    orderStatus: row.order_status || (row.status === "Selesai" ? "completed" : "pending"),
+    status: row.status || sellerOrderStatusToPublic(row.order_status),
+    grossAmount,
+    platformFee,
+    netAmount: Math.max(0, grossAmount - platformFee),
+  };
+}
+
+function periodRange(period: string, startDate?: string, endDate?: string) {
+  const now = new Date();
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+
+  if (period === "custom" && startDate && endDate) {
+    const start = new Date(`${startDate}T00:00:00.000Z`);
+    const customEnd = new Date(`${endDate}T23:59:59.999Z`);
+    if (!Number.isNaN(start.getTime()) && !Number.isNaN(customEnd.getTime())) {
+      return { start: start.toISOString(), end: customEnd.toISOString() };
+    }
+  }
+
+  if (period === "this_month") {
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+    return { start: start.toISOString(), end: end.toISOString() };
+  }
+
+  if (period === "last_30_days") {
+    const start = new Date(now);
+    start.setDate(start.getDate() - 30);
+    start.setHours(0, 0, 0, 0);
+    return { start: start.toISOString(), end: end.toISOString() };
+  }
+
+  return { start: null, end: null };
+}
+
+async function readSellerEarningsBundle(userId: string, filters: any = {}) {
+  const { period = "all", startDate, endDate, status = "all" } = filters;
+  const range = periodRange(String(period || "all"), startDate, endDate);
+
+  let ordersQuery = supabaseAdmin
+    .from("orders")
+    .select("id,service_id,buyer_name,buyer_email,service_title,service_price,status,order_status,created_at,services!inner(id,title,seller_id)")
+    .eq("services.seller_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (range.start) ordersQuery = ordersQuery.gte("created_at", range.start);
+  if (range.end) ordersQuery = ordersQuery.lte("created_at", range.end);
+  if (status !== "all") {
+    if (status === "completed") {
+      ordersQuery = ordersQuery.eq("order_status", "completed");
+    } else if (["pending", "accepted", "in_progress", "cancelled"].includes(status)) {
+      ordersQuery = ordersQuery.eq("order_status", status);
+    }
+  }
+
+  const allOrdersQuery = supabaseAdmin
+    .from("orders")
+    .select("id,service_price,status,order_status,services!inner(seller_id)")
+    .eq("services.seller_id", userId);
+
+  const [ordersResult, allOrdersResult, accountsResult, withdrawalsResult] = await Promise.all([
+    ordersQuery,
+    allOrdersQuery,
+    supabaseAdmin.from("seller_payout_accounts").select(sellerPayoutAccountSelect).eq("seller_id", userId).order("created_at", { ascending: false }),
+    supabaseAdmin.from("seller_withdrawals").select(sellerWithdrawalSelect).eq("seller_id", userId).order("requested_at", { ascending: false }),
+  ]);
+
+  const firstError = ordersResult.error || allOrdersResult.error || accountsResult.error || withdrawalsResult.error;
+  if (firstError) return { data: null, error: firstError };
+
+  const allOrders = allOrdersResult.data || [];
+  const completedOrders = allOrders.filter((order: any) => order.order_status === "completed" || order.status === "Selesai");
+  const grossRevenue = completedOrders.reduce((total: number, order: any) => total + toMoney(order.service_price), 0);
+  const platformCommission = Math.round(grossRevenue * PLATFORM_COMMISSION_RATE);
+  const netRevenue = Math.max(0, grossRevenue - platformCommission);
+  const withdrawals = withdrawalsResult.data || [];
+  const heldBalance = withdrawals
+    .filter((item: any) => item.status === "pending" || item.status === "approved")
+    .reduce((total: number, item: any) => total + toMoney(item.amount), 0);
+  const totalWithdrawn = withdrawals
+    .filter((item: any) => item.status === "paid")
+    .reduce((total: number, item: any) => total + toMoney(item.amount), 0);
+  const balanceUsed = withdrawals
+    .filter((item: any) => withdrawalAffectsBalance(item.status))
+    .reduce((total: number, item: any) => total + toMoney(item.amount), 0);
+
+  return {
+    data: {
+      earnings: {
+        total_orders: allOrders.length,
+        completed_orders: completedOrders.length,
+        pending_orders: allOrders.filter((order: any) => ["pending", "accepted", "in_progress"].includes(order.order_status)).length,
+        gross_revenue: grossRevenue,
+        platform_commission: platformCommission,
+        platform_commission_rate: PLATFORM_COMMISSION_RATE,
+        net_revenue: netRevenue,
+        estimated_net_revenue: netRevenue,
+        available_balance: Math.max(0, netRevenue - balanceUsed),
+        held_balance: heldBalance,
+        total_withdrawn: totalWithdrawn,
+      },
+      history: (ordersResult.data || []).map(mapSellerEarningOrder),
+      payoutAccounts: (accountsResult.data || []).map(mapSellerPayoutAccount),
+      withdrawals: withdrawals.map(mapSellerWithdrawal),
+      filters: { period, startDate: startDate || "", endDate: endDate || "", status },
+    },
+    error: null,
+  };
+}
+
 async function handleSellerEarnings(req: any, res: any) {
   const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
   if (!user) return sendError(res, status, error || "Akses ditolak.");
   if (req.method !== "GET") return sendError(res, 405, "Method not allowed");
 
-  const { data: orders, error: orderError } = await supabaseAdmin.from("orders").select("id,service_price,order_status,status,services!inner(seller_id)").eq("services.seller_id", user.id);
-  if (orderError) {
-    logSellerEndpointError("GET /api/seller/earnings", orderError, sellerRequestContext(req, user, profile));
-    return sendError(res, 500, "GET /api/seller/earnings gagal menghitung pendapatan seller.", supabaseErrorDetail(orderError));
+  const bundle = await readSellerEarningsBundle(user.id, req.query || {});
+  if (bundle.error || !bundle.data) {
+    logSellerEndpointError("GET /api/seller/earnings", bundle.error, sellerRequestContext(req, user, profile));
+    return sendError(res, 500, "GET /api/seller/earnings gagal menghitung pendapatan seller.", supabaseErrorDetail(bundle.error));
+  }
+  return sendJson(res, 200, bundle.data);
+}
+
+async function handleSellerPayoutAccounts(req: any, res: any) {
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
+  if (!user || !profile) return sendError(res, status, error || "Akses ditolak.");
+
+  if (req.method === "GET") {
+    const { data, error: queryError } = await supabaseAdmin.from("seller_payout_accounts").select(sellerPayoutAccountSelect).eq("seller_id", user.id).order("created_at", { ascending: false });
+    if (queryError) return sendError(res, 500, "Gagal mengambil rekening pencairan.", supabaseErrorDetail(queryError));
+    return sendJson(res, 200, { payoutAccounts: (data || []).map(mapSellerPayoutAccount) });
   }
 
-  const totalOrders = orders?.length || 0;
-  const completedOrders = (orders || []).filter((order: any) => order.order_status === "completed" || order.status === "Selesai").length;
-  const pendingOrders = (orders || []).filter((order: any) => ["pending", "accepted", "in_progress"].includes(order.order_status)).length;
-  const grossRevenue = (orders || []).reduce((total: number, order: any) => (order.order_status === "completed" || order.status === "Selesai" ? total + (order.service_price || 0) : total), 0);
-  return sendJson(res, 200, { earnings: { total_orders: totalOrders, completed_orders: completedOrders, pending_orders: pendingOrders, gross_revenue: grossRevenue, estimated_net_revenue: Math.round(grossRevenue * 0.9) } });
+  if (req.method === "POST") {
+    const { bankName, accountNumber, accountHolderName } = req.body || {};
+    if (!bankName || !accountNumber || !accountHolderName) return sendError(res, 400, "Nama bank, nomor rekening, dan nama pemilik wajib diisi.");
+    const { data, error: insertError } = await supabaseAdmin
+      .from("seller_payout_accounts")
+      .insert({
+        seller_id: user.id,
+        bank_name: String(bankName).trim().slice(0, 80),
+        account_number: String(accountNumber).trim().slice(0, 60),
+        account_holder_name: String(accountHolderName).trim().slice(0, 120),
+        active: true,
+      })
+      .select(sellerPayoutAccountSelect)
+      .single();
+    if (insertError || !data) return sendError(res, 500, "Gagal menambah rekening pencairan.", supabaseErrorDetail(insertError));
+    return sendJson(res, 201, { payoutAccount: mapSellerPayoutAccount(data) });
+  }
+
+  if (req.method === "PATCH" || req.method === "PUT") {
+    const { id, bankName, accountNumber, accountHolderName, active } = req.body || {};
+    if (!id) return sendError(res, 400, "id rekening wajib dikirim.");
+    const updates: any = {};
+    if (bankName !== undefined) updates.bank_name = String(bankName).trim().slice(0, 80);
+    if (accountNumber !== undefined) updates.account_number = String(accountNumber).trim().slice(0, 60);
+    if (accountHolderName !== undefined) updates.account_holder_name = String(accountHolderName).trim().slice(0, 120);
+    if (active !== undefined) updates.active = Boolean(active);
+    const { data, error: updateError } = await supabaseAdmin
+      .from("seller_payout_accounts")
+      .update(updates)
+      .eq("id", id)
+      .eq("seller_id", user.id)
+      .select(sellerPayoutAccountSelect)
+      .single();
+    if (updateError || !data) return sendError(res, 404, "Rekening pencairan tidak ditemukan.", supabaseErrorDetail(updateError));
+    return sendJson(res, 200, { payoutAccount: mapSellerPayoutAccount(data) });
+  }
+
+  if (req.method === "DELETE") {
+    const id = req.query?.id || req.body?.id;
+    if (!id) return sendError(res, 400, "id rekening wajib dikirim.");
+    const { error: deleteError } = await supabaseAdmin.from("seller_payout_accounts").delete().eq("id", id).eq("seller_id", user.id);
+    if (deleteError) return sendError(res, 500, "Gagal menghapus rekening pencairan.", supabaseErrorDetail(deleteError));
+    return sendJson(res, 200, { ok: true });
+  }
+
+  return sendError(res, 405, "Method not allowed");
+}
+
+async function handleSellerWithdrawals(req: any, res: any) {
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
+  if (!user || !profile) return sendError(res, status, error || "Akses ditolak.");
+
+  if (req.method === "GET") {
+    const { data, error: queryError } = await supabaseAdmin.from("seller_withdrawals").select(sellerWithdrawalSelect).eq("seller_id", user.id).order("requested_at", { ascending: false });
+    if (queryError) return sendError(res, 500, "Gagal mengambil riwayat penarikan.", supabaseErrorDetail(queryError));
+    return sendJson(res, 200, { withdrawals: (data || []).map(mapSellerWithdrawal) });
+  }
+
+  if (req.method === "POST") {
+    const amount = toMoney(req.body?.amount);
+    const payoutAccountId = req.body?.payoutAccountId;
+    if (!payoutAccountId) return sendError(res, 400, "Rekening pencairan wajib dipilih.");
+    if (!amount) return sendError(res, 400, "Nominal penarikan wajib lebih dari 0.");
+
+    const { data: account, error: accountError } = await supabaseAdmin
+      .from("seller_payout_accounts")
+      .select(sellerPayoutAccountSelect)
+      .eq("id", payoutAccountId)
+      .eq("seller_id", user.id)
+      .eq("active", true)
+      .maybeSingle();
+    if (accountError) return sendError(res, 500, "Gagal memvalidasi rekening pencairan.", supabaseErrorDetail(accountError));
+    if (!account) return sendError(res, 400, "Rekening pencairan tidak valid atau sudah dihapus.");
+
+    const bundle = await readSellerEarningsBundle(user.id);
+    if (bundle.error || !bundle.data) return sendError(res, 500, "Gagal memvalidasi saldo tersedia.", supabaseErrorDetail(bundle.error));
+    if (amount > bundle.data.earnings.available_balance) return sendError(res, 400, "Nominal penarikan melebihi saldo tersedia.");
+
+    const { data, error: insertError } = await supabaseAdmin
+      .from("seller_withdrawals")
+      .insert({
+        seller_id: user.id,
+        payout_account_id: payoutAccountId,
+        amount,
+        status: "pending",
+        note: req.body?.note ? String(req.body.note).slice(0, 240) : "Simulasi prototype, tidak ada transfer uang sungguhan.",
+      })
+      .select(sellerWithdrawalSelect)
+      .single();
+    if (insertError || !data) return sendError(res, 500, "Gagal membuat pengajuan penarikan.", supabaseErrorDetail(insertError));
+    return sendJson(res, 201, { withdrawal: mapSellerWithdrawal(data), message: "Pengajuan penarikan saldo berhasil dibuat dengan status pending." });
+  }
+
+  return sendError(res, 405, "Method not allowed");
+}
+
+async function handleSellerEarningsExport(req: any, res: any) {
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
+  if (!user || !profile) return sendError(res, status, error || "Akses ditolak.");
+  if (req.method !== "GET") return sendError(res, 405, "Method not allowed");
+
+  const bundle = await readSellerEarningsBundle(user.id, req.query || {});
+  if (bundle.error || !bundle.data) return sendError(res, 500, "Gagal export laporan pendapatan.", supabaseErrorDetail(bundle.error));
+
+  const escapeCsv = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const rows = [
+    ["Tanggal", "Order ID", "Layanan", "Pembeli", "Status", "Pendapatan Kotor", "Komisi Platform", "Pendapatan Bersih"],
+    ...bundle.data.history.map((item: any) => [
+      item.date,
+      item.orderId,
+      item.serviceTitle,
+      item.buyerName,
+      item.orderStatus,
+      item.grossAmount,
+      item.platformFee,
+      item.netAmount,
+    ]),
+  ];
+  const csv = rows.map((row) => row.map(escapeCsv).join(",")).join("\n");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="seller-earnings-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.status(200).send(csv);
 }
 
 async function handleRecruiterJobs(req: any, res: any) {
@@ -2035,6 +2328,18 @@ export default async function handler(req: any, res: any) {
     if (route === "seller/earnings") {
       logRouteSelection(req, route, "handleSellerEarnings");
       return handleSellerEarnings(req, res);
+    }
+    if (route === "seller/earnings/export") {
+      logRouteSelection(req, route, "handleSellerEarningsExport");
+      return handleSellerEarningsExport(req, res);
+    }
+    if (route === "seller/payout-accounts") {
+      logRouteSelection(req, route, "handleSellerPayoutAccounts");
+      return handleSellerPayoutAccounts(req, res);
+    }
+    if (route === "seller/withdrawals") {
+      logRouteSelection(req, route, "handleSellerWithdrawals");
+      return handleSellerWithdrawals(req, res);
     }
     if (route === "seller/profile") {
       logRouteSelection(req, route, "handleSellerProfile");
