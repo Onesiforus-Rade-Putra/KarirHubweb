@@ -16,8 +16,6 @@ import {
   Settings,
   ShoppingCart,
   Sparkles,
-  Store,
-  User,
   UserRound,
   Users,
   X
@@ -104,8 +102,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   const accent = roleAccent[effectiveRole];
   const brandText =
     isAuthenticated && currentRole === "seller" ? "KarirHub Seller" : isAuthenticated && currentRole === "recruiter" ? "KarirHub Recruiter" : "KarirHub";
-  const initials =
-    currentRole === "recruiter" ? "PT" : currentRole === "seller" ? "JD" : (user?.name || "JD").split(" ").map((part: string) => part[0]).join("").slice(0, 2).toUpperCase();
+  const displayName = user?.name || user?.company || "Pengguna KarirHub";
+  const displaySubtitle = currentRole === "seller" ? "Seller" : currentRole === "recruiter" ? "Recruiter" : "Pencari Kerja";
+  const initials = displayName.split(" ").map((part: string) => part[0]).join("").slice(0, 2).toUpperCase() || "KH";
 
   const activeClass = {
     blue: "bg-blue-50 text-blue-600",
@@ -118,10 +117,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     purple: "bg-purple-600 text-white hover:bg-purple-700",
     emerald: "bg-emerald-600 text-white hover:bg-emerald-700"
   }[accent];
-  const notifications =
-    currentRole === "seller"
-      ? ["Pesanan baru menunggu diproses.", "Jadwal konsultasi hari ini tersedia."]
-      : ["Ada pelamar baru untuk lowongan aktif.", "Talent Pool memiliki kandidat baru."];
+  const notifications = ["Notifikasi real belum tersedia pada tahap stabilisasi ini."];
 
   return (
     <nav className="sticky top-0 z-50 border-b border-slate-100 bg-white">
@@ -202,7 +198,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 aria-expanded={notificationsOpen}
               >
                 <Bell className="h-5 w-5" />
-                <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-red-500" />
+                <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-slate-300" />
               </button>
               {notificationsOpen && (
                 <div className="absolute right-0 top-12 w-80 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-xl">
@@ -214,7 +210,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </div>
                   <div className="mt-2 space-y-2">
                     {notifications.map((item) => (
-                      <button key={item} onClick={() => setNotificationsOpen(false)} className="w-full rounded-lg bg-slate-50 p-3 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100">
+                      <button key={item} disabled className="w-full cursor-not-allowed rounded-lg bg-slate-50 p-3 text-left text-sm font-semibold text-slate-500">
                         {item}
                       </button>
                     ))}
@@ -241,7 +237,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
               title="Profil"
             >
-              {currentRole === "seeker" && user?.avatar ? (
+              {user?.avatar ? (
                 <img src={user.avatar} alt="Avatar" className="h-full w-full rounded-full object-cover" />
               ) : (
                 initials
@@ -251,8 +247,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {isAuthenticated && (currentRole === "seller" || currentRole === "recruiter") && (
             <div className="hidden min-w-[82px] leading-tight lg:block">
-              <p className="text-sm font-bold text-slate-950">{currentRole === "seller" ? "John Doe" : "PT Tech Indonesia"}</p>
-              <p className="text-xs text-slate-500">{currentRole === "seller" ? "Seller" : "Recruiter"}</p>
+              <p className="max-w-[150px] truncate text-sm font-bold text-slate-950">{displayName}</p>
+              <p className="text-xs text-slate-500">{displaySubtitle}</p>
             </div>
           )}
 

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { ArrowDownLeft, ArrowUpRight, CreditCard, Download, Landmark, Layers, TrendingUp } from "lucide-react";
 import { ServiceOrder } from "../../types";
 import { SellerEarningsSummary } from "../../lib/karirHubApi";
@@ -6,18 +6,10 @@ import { SellerEarningsSummary } from "../../lib/karirHubApi";
 interface EarningsProps {
   earnings?: SellerEarningsSummary | null;
   orders?: ServiceOrder[];
-  onWithdrawFunds?: (amount: number, bank: string, accountNo: string) => void;
+  onUnavailableAction?: (message?: string) => void;
   toast?: (msg: string, status?: string) => void;
   setActiveTab?: (tab: string) => void;
 }
-
-const transactions = [
-  { title: "Review CV Profesional - Budi Santoso", date: "2026-06-05 14:30", amount: 250000, status: "Selesai", type: "in" },
-  { title: "Mock Interview - Siti Aminah", date: "2026-06-04 10:15", amount: 350000, status: "Selesai", type: "in" },
-  { title: "Penarikan ke Bank BCA - 1234567890", date: "2026-06-03 09:00", amount: 5000000, status: "Selesai", type: "out" },
-  { title: "Career Coaching Premium - Ahmad Rizki", date: "2026-06-02 16:45", amount: 500000, status: "Selesai", type: "in" },
-  { title: "Optimasi LinkedIn Profile - Dewi Lestari", date: "2026-06-01 11:20", amount: 300000, status: "Pending", type: "in" }
-];
 
 const formatPrice = (price: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -26,28 +18,17 @@ const formatPrice = (price: number) =>
     maximumFractionDigits: 0
   }).format(price);
 
-export const SellerEarnings: React.FC<EarningsProps> = ({ earnings, orders = [], onWithdrawFunds, toast, setActiveTab }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [amount, setAmount] = useState("");
-  const visibleTransactions = orders.length
-    ? orders.slice(0, 6).map((order) => ({
+export const SellerEarnings: React.FC<EarningsProps> = ({ earnings, orders = [], onUnavailableAction, setActiveTab }) => {
+  const visibleTransactions = orders
+    .slice(0, 6)
+    .map((order) => ({
         title: `${order.serviceTitle} - ${order.buyerName}`,
         date: order.date || "Baru saja",
         amount: order.servicePrice,
         status: order.status === "Selesai" ? "Selesai" : "Pending",
         type: "in"
-      }))
-    : transactions;
-
-  const handleWithdraw = (event: React.FormEvent) => {
-    event.preventDefault();
-    const value = Number(amount);
-    if (!value) return;
-    onWithdrawFunds?.(value, "Bank BCA", "1234567890");
-    toast?.(`Penarikan ${formatPrice(value)} berhasil diajukan.`, "success");
-    setAmount("");
-    setIsOpen(false);
-  };
+      }));
+  const unavailable = () => onUnavailableAction?.("Fitur ini belum tersedia pada tahap stabilisasi dashboard seller.");
 
   return (
     <div className="mx-auto max-w-[1536px] px-8 py-12 text-left">
@@ -57,11 +38,11 @@ export const SellerEarnings: React.FC<EarningsProps> = ({ earnings, orders = [],
           <p className="mt-2 text-xl text-slate-600">Kelola saldo dan riwayat transaksi Anda</p>
         </div>
         <button
-          onClick={() => setIsOpen(true)}
-          className="inline-flex h-14 items-center justify-center gap-3 rounded-lg bg-purple-600 px-8 text-lg font-semibold text-white transition hover:bg-purple-700"
+          onClick={unavailable}
+          className="inline-flex h-14 items-center justify-center gap-3 rounded-lg border border-slate-200 bg-white px-8 text-lg font-semibold text-slate-500 transition hover:bg-slate-50"
         >
           <Download className="h-5 w-5" />
-          Tarik Saldo
+          Tarik Saldo Belum Tersedia
         </button>
       </div>
 
@@ -70,10 +51,10 @@ export const SellerEarnings: React.FC<EarningsProps> = ({ earnings, orders = [],
           <p className="text-lg text-purple-100">Saldo Tersedia</p>
           <p className="mt-4 text-4xl font-black">{formatPrice(earnings?.estimated_net_revenue || 0)}</p>
           <button
-            onClick={() => setIsOpen(true)}
+            onClick={unavailable}
             className="mt-6 h-11 w-full rounded-lg bg-white font-semibold text-purple-600 transition hover:bg-purple-50"
           >
-            Tarik Saldo
+            Belum bisa ditarik
           </button>
         </div>
 
@@ -83,7 +64,7 @@ export const SellerEarnings: React.FC<EarningsProps> = ({ earnings, orders = [],
             <span className="text-lg">Pendapatan Bulan Ini</span>
           </div>
           <p className="mt-4 text-3xl font-black text-slate-950">{formatPrice(earnings?.gross_revenue || 0)}</p>
-          <p className="mt-3 text-base font-medium text-emerald-600">+23% dari bulan lalu</p>
+          <p className="mt-3 text-base font-medium text-slate-500">Dihitung dari pesanan seller yang selesai.</p>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-8">
@@ -101,12 +82,18 @@ export const SellerEarnings: React.FC<EarningsProps> = ({ earnings, orders = [],
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-2xl font-black text-slate-950">Riwayat Transaksi</h2>
             <div className="flex gap-2">
-              <button className="h-10 rounded-lg border border-slate-200 px-5 font-medium text-slate-700 hover:bg-slate-50">Filter</button>
-              <button className="h-10 rounded-lg border border-slate-200 px-5 font-medium text-slate-700 hover:bg-slate-50">Export</button>
+              <button disabled title="Filter pendapatan belum tersedia" className="h-10 cursor-not-allowed rounded-lg border border-slate-200 px-5 font-medium text-slate-400">Filter</button>
+              <button disabled title="Export pendapatan belum tersedia" className="h-10 cursor-not-allowed rounded-lg border border-slate-200 px-5 font-medium text-slate-400">Export</button>
             </div>
           </div>
 
           <div className="mt-7 space-y-5">
+            {visibleTransactions.length === 0 && (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                <p className="text-base font-black text-slate-800">Belum ada transaksi seller.</p>
+                <p className="mt-2 text-sm font-medium text-slate-500">Riwayat pendapatan akan muncul setelah pesanan layanan masuk.</p>
+              </div>
+            )}
             {visibleTransactions.map((tx) => {
               const isOut = tx.type === "out";
               return (
@@ -132,48 +119,35 @@ export const SellerEarnings: React.FC<EarningsProps> = ({ earnings, orders = [],
             })}
           </div>
 
-          <button className="mt-7 w-full text-center text-base font-semibold text-purple-600 hover:text-purple-700">
-            Lihat Semua Transaksi
+          <button disabled title="Daftar penuh transaksi belum tersedia" className="mt-7 w-full cursor-not-allowed text-center text-base font-semibold text-slate-400">
+            Lihat Semua Transaksi Belum Tersedia
           </button>
         </section>
 
         <aside className="space-y-7">
           <section className="rounded-2xl border border-slate-200 bg-white p-7">
             <h2 className="text-xl font-black text-slate-950">Metode Penarikan</h2>
-            <div className="mt-5 rounded-xl border border-slate-200 p-4">
+            <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
               <div className="flex items-center gap-4">
                 <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-100 text-blue-600">
                   <Landmark className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-lg font-semibold text-slate-950">Bank BCA</p>
-                  <p className="text-base text-slate-500">**** **** **** 7890</p>
-                  <span className="mt-2 inline-flex rounded bg-emerald-100 px-2 py-1 text-sm font-medium text-emerald-700">Default</span>
+                  <p className="text-lg font-semibold text-slate-950">Belum ada rekening penarikan</p>
+                  <p className="text-base text-slate-500">Payout belum diaktifkan pada tahap ini.</p>
                 </div>
               </div>
             </div>
-            <button className="mt-4 h-12 w-full rounded-lg border border-dashed border-slate-300 font-semibold text-slate-700 hover:bg-slate-50">
-              + Tambah Rekening Baru
+            <button disabled title="Tambah rekening belum tersedia" className="mt-4 h-12 w-full cursor-not-allowed rounded-lg border border-dashed border-slate-300 font-semibold text-slate-400">
+              Tambah Rekening Belum Tersedia
             </button>
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-7">
             <h2 className="text-xl font-black text-slate-950">Statistik</h2>
-            {[
-              ["Minggu Ini", "Rp 1,8 Jt", "45%"],
-              ["Bulan Ini", "Rp 8,2 Jt", "76%"],
-              ["Tahun Ini", "Rp 45,5 Jt", "88%"]
-            ].map(([label, value, width]) => (
-              <div key={label} className="mt-5">
-                <div className="flex justify-between text-base">
-                  <span className="text-slate-600">{label}</span>
-                  <span className="font-black text-slate-950">{value}</span>
-                </div>
-                <div className="mt-2 h-2 rounded-full bg-slate-200">
-                  <div className="h-full rounded-full bg-purple-600" style={{ width }} />
-                </div>
-              </div>
-            ))}
+            <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-semibold text-slate-500">
+              Statistik periode belum tersedia karena endpoint analitik seller belum dibuat pada tahap ini.
+            </div>
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-7">
@@ -199,32 +173,6 @@ export const SellerEarnings: React.FC<EarningsProps> = ({ earnings, orders = [],
           </section>
         </aside>
       </div>
-
-      {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
-          <form onSubmit={handleWithdraw} className="w-full max-w-md rounded-2xl bg-white p-6 text-left shadow-2xl">
-            <h2 className="text-2xl font-black text-slate-950">Tarik Saldo</h2>
-            <p className="mt-2 text-slate-500">Dana akan ditransfer ke Bank BCA default.</p>
-            <label className="mt-6 block text-sm font-semibold text-slate-600">Nominal</label>
-            <input
-              value={amount}
-              onChange={(event) => setAmount(event.target.value)}
-              type="number"
-              className="mt-2 h-12 w-full rounded-lg border border-slate-200 px-4 font-semibold outline-none focus:border-purple-500"
-              placeholder="1000000"
-              required
-            />
-            <div className="mt-6 flex gap-3">
-              <button type="button" onClick={() => setIsOpen(false)} className="h-11 flex-1 rounded-lg border border-slate-200 font-semibold text-slate-700">
-                Batal
-              </button>
-              <button type="submit" className="h-11 flex-1 rounded-lg bg-purple-600 font-semibold text-white">
-                Ajukan
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
     </div>
   );
 };

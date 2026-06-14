@@ -11,14 +11,51 @@ const orderSelect = "id,buyer_name,buyer_email,service_title,service_price,requi
 const sellerOrderSelect = "id,buyer_name,buyer_email,service_title,service_price,requirements,status,order_status,seller_notes,result_url,created_at,services!inner(id,title,seller_id)";
 const appSelect = "id,user_id,job_id,candidate_name,candidate_title,candidate_email,candidate_rating,candidate_experience,status,application_status,recruiter_notes,resume_summary,created_at,jobs!inner(id,title,recruiter_id)";
 
+function sellerRequestContext(req: any, user?: any, profile?: any) {
+  let pathname = "";
+  try {
+    pathname = new URL(req.url || "/", `https://${req.headers.host || "localhost"}`).pathname;
+  } catch {
+    pathname = req.url || "";
+  }
+
+  return {
+    method: req.method,
+    pathname,
+    userId: user?.id,
+    role: profile?.role,
+  };
+}
+
+function logSellerEndpointError(endpoint: string, error: any, context: Record<string, unknown> = {}) {
+  console.error(`[seller endpoint error] ${endpoint}`, {
+    ...context,
+    message: error?.message,
+    details: error?.details,
+    hint: error?.hint,
+    code: error?.code,
+  });
+}
+
+function supabaseErrorDetail(error: any) {
+  return [error?.message, error?.details, error?.hint, error?.code ? `code=${error.code}` : ""].filter(Boolean).join(" | ");
+}
+
 function routeValueToString(value: unknown) {
   if (Array.isArray(value)) return value.filter(Boolean).join("/");
   return typeof value === "string" ? value : "";
 }
 
+function cleanApiRoute(value: string) {
+  return value
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "")
+    .replace(/^(api\/)+/, "");
+}
+
 function normalizeApiPath(req: any) {
   const query = req.query || {};
-  const routeFromQuery = routeValueToString(query.route || query.slug || query.path || query["0"]).replace(/^\/+/, "");
+  const routeFromQuery = cleanApiRoute(routeValueToString(query.route || query["...route"] || query.slug || query.path || query["0"]));
 
   let pathname = "/";
   try {
@@ -27,16 +64,42 @@ function normalizeApiPath(req: any) {
     pathname = "/";
   }
 
-  if (pathname === "/" || pathname === "/api" || pathname === "/api/") {
+  if (pathname === "/" || pathname === "/api" || pathname === "/api/" || pathname === "/api/[...route]") {
     pathname = routeFromQuery ? `/api/${routeFromQuery}` : "/api";
   }
 
-  pathname = pathname.replace(/\/+$/, "");
+  pathname = `/${cleanApiRoute(pathname)}`;
+  if (pathname === "/") pathname = "/api";
   return pathname || "/api";
 }
 
-function routeOf(req: any) {
-  return normalizeApiPath(req).replace(/^\/api\/?/, "");
+function rawPathname(req: any) {
+  try {
+    return new URL(req.url || "/", `https://${req.headers.host || "localhost"}`).pathname;
+  } catch {
+    return req.url || "";
+  }
+}
+
+function logRawApiRequest(req: any) {
+  const routeQuery = req.query?.route;
+  console.log("[api request raw]", {
+    method: req.method,
+    url: req.url,
+    queryRoute: routeQuery,
+    queryRouteType: Array.isArray(routeQuery) ? "array" : typeof routeQuery,
+    pathname: rawPathname(req),
+  });
+}
+
+function logRouteSelection(req: any, route: string, handlerName: string) {
+  console.log("[api route selected]", {
+    method: req.method,
+    url: req.url,
+    normalizedPathname: normalizeApiPath(req),
+    route,
+    handlerName,
+  });
 }
 
 function publicUser(profile: any, email: string) {
@@ -450,6 +513,231 @@ async function handleSettings(req: any, res: any) {
   return sendError(res, 405, "Method not allowed");
 }
 
+function mapSellerProfileBundle(profile: any, base: any, specializations: any[], experiences: any[], certificates: any[], portfolios: any[]) {
+  return {
+    basic: {
+      photoUrl: base?.photo_url || profile.avatar_url || "",
+      fullName: base?.full_name || profile.full_name || "",
+      tagline: base?.tagline || "",
+      bio: base?.bio || "",
+    },
+    specializations: (specializations || []).map((item: any) => item.specialization).filter(Boolean),
+    experiences: (experiences || []).map((item: any) => ({
+      id: item.id,
+      position: item.position || "",
+      company: item.company || "",
+      startDate: item.start_date || "",
+      endDate: item.end_date || "",
+      description: item.description || "",
+    })),
+    certificates: (certificates || []).map((item: any) => ({
+      id: item.id,
+      name: item.name || "",
+      issuer: item.issuer || "",
+      year: item.year || "",
+    })),
+    portfolios: (portfolios || []).map((item: any) => ({
+      id: item.id,
+      title: item.title || "",
+      description: item.description || "",
+      link: item.link || "",
+    })),
+  };
+}
+
+async function readSellerProfileBundle(user: any, profile: any, req?: any) {
+  const [baseResult, specResult, expResult, certResult, portfolioResult] = await Promise.all([
+    supabaseAdmin.from("seller_profiles").select("*").eq("user_id", user.id).maybeSingle(),
+    supabaseAdmin.from("seller_specializations").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
+    supabaseAdmin.from("seller_experiences").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: false }),
+    supabaseAdmin.from("seller_certificates").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: false }),
+    supabaseAdmin.from("seller_portfolios").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: false }),
+  ]);
+  const firstError = baseResult.error || specResult.error || expResult.error || certResult.error || portfolioResult.error;
+  if (firstError) {
+    logSellerEndpointError("GET /api/seller/profile", firstError, req ? sellerRequestContext(req, user, profile) : { userId: user.id, role: profile?.role });
+    return { error: supabaseErrorDetail(firstError), profile: null };
+  }
+  return { error: null, profile: mapSellerProfileBundle(profile, baseResult.data, specResult.data || [], expResult.data || [], certResult.data || [], portfolioResult.data || []) };
+}
+
+async function handleSellerProfile(req: any, res: any) {
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
+  if (!user || !profile) return sendError(res, status, error || "Akses ditolak.");
+
+  if (req.method === "GET") {
+    const bundle = await readSellerProfileBundle(user, profile, req);
+    if (bundle.error) return sendError(res, 500, "Gagal mengambil profil seller.", bundle.error);
+    return sendJson(res, 200, { profile: bundle.profile });
+  }
+
+  if (req.method === "PATCH" || req.method === "PUT") {
+    const payload = req.body || {};
+    const basic = payload.basic || {};
+    const { error: baseError } = await supabaseAdmin.from("seller_profiles").upsert({
+      user_id: user.id,
+      photo_url: basic.photoUrl || null,
+      full_name: basic.fullName || profile.full_name || "",
+      tagline: basic.tagline || "",
+      bio: basic.bio || "",
+    }, { onConflict: "user_id" });
+    if (baseError) {
+      logSellerEndpointError("PATCH /api/seller/profile base upsert", baseError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "PATCH /api/seller/profile gagal menyimpan profil dasar seller.", supabaseErrorDetail(baseError));
+    }
+
+    const spec = Array.isArray(payload.specializations) ? Array.from(new Set(payload.specializations.map((item: any) => String(item || "").trim()).filter(Boolean))) : [];
+    let listError =
+      await replaceProfileList("seller_specializations", user.id, spec.map((specialization, index) => ({ user_id: user.id, specialization, sort_order: index })));
+    if (listError) {
+      logSellerEndpointError("PATCH /api/seller/profile specializations", listError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "PATCH /api/seller/profile gagal menyimpan spesialisasi seller.", supabaseErrorDetail(listError));
+    }
+
+    listError = await replaceProfileList("seller_experiences", user.id, (payload.experiences || []).map((item: any, index: number) => ({
+      user_id: user.id,
+      position: item.position || "Posisi",
+      company: item.company || "Perusahaan",
+      start_date: item.startDate || "",
+      end_date: item.endDate || "",
+      description: item.description || "",
+      sort_order: index,
+    })));
+    if (listError) {
+      logSellerEndpointError("PATCH /api/seller/profile experiences", listError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "PATCH /api/seller/profile gagal menyimpan pengalaman seller.", supabaseErrorDetail(listError));
+    }
+
+    listError = await replaceProfileList("seller_certificates", user.id, (payload.certificates || []).map((item: any, index: number) => ({
+      user_id: user.id,
+      name: item.name || "Sertifikat",
+      issuer: item.issuer || "Institusi",
+      year: item.year || "",
+      sort_order: index,
+    })));
+    if (listError) {
+      logSellerEndpointError("PATCH /api/seller/profile certificates", listError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "PATCH /api/seller/profile gagal menyimpan sertifikat seller.", supabaseErrorDetail(listError));
+    }
+
+    listError = await replaceProfileList("seller_portfolios", user.id, (payload.portfolios || []).map((item: any, index: number) => ({
+      user_id: user.id,
+      title: item.title || "Portfolio",
+      description: item.description || "",
+      link: item.link || "",
+      sort_order: index,
+    })));
+    if (listError) {
+      logSellerEndpointError("PATCH /api/seller/profile portfolios", listError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "PATCH /api/seller/profile gagal menyimpan portfolio seller.", supabaseErrorDetail(listError));
+    }
+
+    const bundle = await readSellerProfileBundle(user, profile, req);
+    if (bundle.error) return sendError(res, 500, "Profil seller tersimpan, tetapi gagal dimuat ulang.", bundle.error);
+    return sendJson(res, 200, { profile: bundle.profile });
+  }
+
+  return sendError(res, 405, "Method not allowed");
+}
+
+function mapRecruiterProfileBundle(profile: any, base: any, benefits: any[], locations: any[], teamMembers: any[]) {
+  return {
+    company: {
+      logoUrl: base?.logo_url || "",
+      companyName: base?.company_name || profile.company || profile.full_name || "",
+      industry: base?.industry || "",
+      companySize: base?.company_size || "",
+      companyEmail: base?.company_email || "",
+      phone: base?.phone || "",
+      website: base?.website || "",
+      about: base?.about || "",
+    },
+    benefits: (benefits || []).map((item: any) => item.benefit).filter(Boolean),
+    locations: (locations || []).map((item: any) => ({
+      id: item.id,
+      name: item.name || "",
+      address: item.address || "",
+      city: item.city || "",
+      officeType: item.office_type || "Branch Office",
+    })),
+    teamMembers: (teamMembers || []).map((item: any) => ({
+      id: item.id,
+      name: item.name || "",
+      position: item.position || "",
+      email: item.email || "",
+    })),
+  };
+}
+
+async function readRecruiterProfileBundle(user: any, profile: any) {
+  const [baseResult, benefitResult, locationResult, teamResult] = await Promise.all([
+    supabaseAdmin.from("recruiter_company_profiles").select("*").eq("user_id", user.id).maybeSingle(),
+    supabaseAdmin.from("recruiter_company_benefits").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
+    supabaseAdmin.from("recruiter_office_locations").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: false }),
+    supabaseAdmin.from("recruiter_team_members").select("*").eq("user_id", user.id).order("sort_order", { ascending: true }).order("created_at", { ascending: false }),
+  ]);
+  const firstError = baseResult.error || benefitResult.error || locationResult.error || teamResult.error;
+  if (firstError) return { error: firstError.message, profile: null };
+  return { error: null, profile: mapRecruiterProfileBundle(profile, baseResult.data, benefitResult.data || [], locationResult.data || [], teamResult.data || []) };
+}
+
+async function handleRecruiterProfile(req: any, res: any) {
+  const { user, profile, error, status } = await requireRecruiter(req, supabaseAdmin);
+  if (!user || !profile) return sendError(res, status, error || "Akses ditolak.");
+
+  if (req.method === "GET") {
+    const bundle = await readRecruiterProfileBundle(user, profile);
+    if (bundle.error) return sendError(res, 500, "Gagal mengambil profil recruiter.", bundle.error);
+    return sendJson(res, 200, { profile: bundle.profile });
+  }
+
+  if (req.method === "PATCH" || req.method === "PUT") {
+    const payload = req.body || {};
+    const company = payload.company || {};
+    const { error: baseError } = await supabaseAdmin.from("recruiter_company_profiles").upsert({
+      user_id: user.id,
+      logo_url: company.logoUrl || null,
+      company_name: company.companyName || profile.company || profile.full_name || "",
+      industry: company.industry || "",
+      company_size: company.companySize || "",
+      company_email: company.companyEmail || "",
+      phone: company.phone || "",
+      website: company.website || "",
+      about: company.about || "",
+    }, { onConflict: "user_id" });
+    if (baseError) return sendError(res, 500, "Gagal menyimpan profil perusahaan.", baseError.message);
+
+    const benefits = Array.isArray(payload.benefits) ? Array.from(new Set(payload.benefits.map((item: any) => String(item || "").trim()).filter(Boolean))) : [];
+    let listError = await replaceProfileList("recruiter_company_benefits", user.id, benefits.map((benefit, index) => ({ user_id: user.id, benefit, sort_order: index })));
+    if (listError) return sendError(res, 500, "Gagal menyimpan benefit perusahaan.", listError.message);
+
+    listError = await replaceProfileList("recruiter_office_locations", user.id, (payload.locations || []).map((item: any, index: number) => ({
+      user_id: user.id,
+      name: item.name || "Lokasi Kantor",
+      address: item.address || "",
+      city: item.city || "",
+      office_type: item.officeType === "Head Office" ? "Head Office" : "Branch Office",
+      sort_order: index,
+    })));
+    if (listError) return sendError(res, 500, "Gagal menyimpan lokasi kantor.", listError.message);
+
+    listError = await replaceProfileList("recruiter_team_members", user.id, (payload.teamMembers || []).map((item: any, index: number) => ({
+      user_id: user.id,
+      name: item.name || "Anggota Tim",
+      position: item.position || "",
+      email: item.email || "",
+      sort_order: index,
+    })));
+    if (listError) return sendError(res, 500, "Gagal menyimpan tim rekrutmen.", listError.message);
+
+    const bundle = await readRecruiterProfileBundle(user, profile);
+    if (bundle.error) return sendError(res, 500, "Profil recruiter tersimpan, tetapi gagal dimuat ulang.", bundle.error);
+    return sendJson(res, 200, { profile: bundle.profile });
+  }
+
+  return sendError(res, 405, "Method not allowed");
+}
+
 async function handlePublicServices(res: any) {
   const { data, error } = await supabaseAdmin
     .from("services")
@@ -606,7 +894,10 @@ async function handleSellerServices(req: any, res: any) {
 
   if (req.method === "GET") {
     const { data, error: queryError } = await supabaseAdmin.from("services").select(serviceSelect).eq("seller_id", user.id).order("created_at", { ascending: false });
-    if (queryError) return sendError(res, 500, "Gagal mengambil layanan seller.", queryError.message);
+    if (queryError) {
+      logSellerEndpointError("GET /api/seller/services", queryError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "GET /api/seller/services gagal mengambil layanan seller.", supabaseErrorDetail(queryError));
+    }
     return sendJson(res, 200, { services: (data || []).map(mapService) });
   }
 
@@ -618,7 +909,10 @@ async function handleSellerServices(req: any, res: any) {
       .insert({ seller_id: user.id, title, provider_name: profile.full_name, provider_avatar: profile.avatar_url || profile.full_name?.slice(0, 2).toUpperCase() || "SL", category: parseServiceCategory(category), rating: 5, reviews_count: 0, price, duration, description, active: Boolean(active), status: active ? "active" : "inactive" })
       .select(serviceSelect)
       .single();
-    if (insertError || !data) return sendError(res, 500, "Gagal membuat layanan.", insertError?.message);
+    if (insertError || !data) {
+      logSellerEndpointError("POST /api/seller/services", insertError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "POST /api/seller/services gagal membuat layanan seller.", supabaseErrorDetail(insertError));
+    }
     return sendJson(res, 201, { service: mapService(data) });
   }
 
@@ -636,7 +930,10 @@ async function handleSellerServices(req: any, res: any) {
       updates.status = active ? "active" : "inactive";
     }
     const { data, error: updateError } = await supabaseAdmin.from("services").update(updates).eq("id", id).eq("seller_id", user.id).select(serviceSelect).single();
-    if (updateError || !data) return sendError(res, 404, "Layanan tidak ditemukan atau gagal diupdate.", updateError?.message);
+    if (updateError || !data) {
+      logSellerEndpointError("PATCH /api/seller/services", updateError, sellerRequestContext(req, user, profile));
+      return sendError(res, 404, "PATCH /api/seller/services gagal mengupdate layanan seller.", supabaseErrorDetail(updateError));
+    }
     return sendJson(res, 200, { service: mapService(data) });
   }
 
@@ -644,7 +941,10 @@ async function handleSellerServices(req: any, res: any) {
     const id = req.query?.id || req.body?.id;
     if (!id) return sendError(res, 400, "id layanan wajib dikirim.");
     const { data, error: deleteError } = await supabaseAdmin.from("services").update({ active: false, status: "inactive" }).eq("id", id).eq("seller_id", user.id).select(serviceSelect).single();
-    if (deleteError || !data) return sendError(res, 404, "Layanan tidak ditemukan atau gagal dinonaktifkan.", deleteError?.message);
+    if (deleteError || !data) {
+      logSellerEndpointError("DELETE /api/seller/services", deleteError, sellerRequestContext(req, user, profile));
+      return sendError(res, 404, "DELETE /api/seller/services gagal menonaktifkan layanan seller.", supabaseErrorDetail(deleteError));
+    }
     return sendJson(res, 200, { service: mapService(data) });
   }
 
@@ -652,12 +952,15 @@ async function handleSellerServices(req: any, res: any) {
 }
 
 async function handleSellerOrders(req: any, res: any) {
-  const { user, error, status } = await requireSeller(req, supabaseAdmin);
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
   if (!user) return sendError(res, status, error || "Akses ditolak.");
 
   if (req.method === "GET") {
     const { data, error: queryError } = await supabaseAdmin.from("orders").select(sellerOrderSelect).eq("services.seller_id", user.id).order("created_at", { ascending: false });
-    if (queryError) return sendError(res, 500, "Gagal mengambil order seller.", queryError.message);
+    if (queryError) {
+      logSellerEndpointError("GET /api/seller/orders", queryError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "GET /api/seller/orders gagal mengambil order seller.", supabaseErrorDetail(queryError));
+    }
     return sendJson(res, 200, { orders: (data || []).map(mapSellerOrder) });
   }
 
@@ -665,13 +968,20 @@ async function handleSellerOrders(req: any, res: any) {
     const { id, orderStatus, sellerNotes, resultUrl } = req.body || {};
     const nextStatus = orderStatus || req.body?.status;
     if (!id || !["pending", "accepted", "in_progress", "completed", "cancelled"].includes(nextStatus)) return sendError(res, 400, "id dan orderStatus valid wajib dikirim.");
-    const { data: existing } = await supabaseAdmin.from("orders").select(sellerOrderSelect).eq("id", id).eq("services.seller_id", user.id).single();
+    const { data: existing, error: existingError } = await supabaseAdmin.from("orders").select(sellerOrderSelect).eq("id", id).eq("services.seller_id", user.id).single();
+    if (existingError) {
+      logSellerEndpointError("PATCH /api/seller/orders read", existingError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "PATCH /api/seller/orders gagal membaca order seller.", supabaseErrorDetail(existingError));
+    }
     if (!existing) return sendError(res, 404, "Order bukan milik layanan seller ini.");
     const updates: any = { order_status: nextStatus, status: sellerOrderStatusToPublic(nextStatus) };
     if (sellerNotes !== undefined) updates.seller_notes = sellerNotes;
     if (resultUrl !== undefined) updates.result_url = resultUrl;
     const { data, error: updateError } = await supabaseAdmin.from("orders").update(updates).eq("id", id).select(sellerOrderSelect).single();
-    if (updateError || !data) return sendError(res, 500, "Order gagal diupdate.", updateError?.message);
+    if (updateError || !data) {
+      logSellerEndpointError("PATCH /api/seller/orders update", updateError, sellerRequestContext(req, user, profile));
+      return sendError(res, 500, "PATCH /api/seller/orders gagal mengupdate order.", supabaseErrorDetail(updateError));
+    }
     return sendJson(res, 200, { order: mapSellerOrder(data) });
   }
 
@@ -679,12 +989,15 @@ async function handleSellerOrders(req: any, res: any) {
 }
 
 async function handleSellerEarnings(req: any, res: any) {
-  const { user, error, status } = await requireSeller(req, supabaseAdmin);
+  const { user, profile, error, status } = await requireSeller(req, supabaseAdmin);
   if (!user) return sendError(res, status, error || "Akses ditolak.");
   if (req.method !== "GET") return sendError(res, 405, "Method not allowed");
 
   const { data: orders, error: orderError } = await supabaseAdmin.from("orders").select("id,service_price,order_status,status,services!inner(seller_id)").eq("services.seller_id", user.id);
-  if (orderError) return sendError(res, 500, "Gagal menghitung pendapatan seller.", orderError.message);
+  if (orderError) {
+    logSellerEndpointError("GET /api/seller/earnings", orderError, sellerRequestContext(req, user, profile));
+    return sendError(res, 500, "GET /api/seller/earnings gagal menghitung pendapatan seller.", supabaseErrorDetail(orderError));
+  }
 
   const totalOrders = orders?.length || 0;
   const completedOrders = (orders || []).filter((order: any) => order.order_status === "completed" || order.status === "Selesai").length;
@@ -1315,8 +1628,16 @@ async function handleResumeBuilder(route: string, req: any, res: any) {
 export default async function handler(req: any, res: any) {
   if (applyCors(req, res)) return;
 
-  const route = routeOf(req);
+  logRawApiRequest(req);
+  const normalizedPathname = normalizeApiPath(req);
+  const route = cleanApiRoute(normalizedPathname);
   const method = req.method;
+  console.log("[api route normalized]", {
+    method,
+    url: req.url,
+    normalizedPathname,
+    route,
+  });
 
   try {
     if (route === "auth/register" && method === "POST") return handleRegister(req, res);
@@ -1325,20 +1646,43 @@ export default async function handler(req: any, res: any) {
     if (route === "profile") return handleProfile(req, res);
     if (route === "profile/cv") return handleProfileCv(req, res);
     if (route === "settings") return handleSettings(req, res);
+    if (route === "seller/services") {
+      logRouteSelection(req, route, "handleSellerServices");
+      return handleSellerServices(req, res);
+    }
+    if (route === "seller/orders") {
+      logRouteSelection(req, route, "handleSellerOrders");
+      return handleSellerOrders(req, res);
+    }
+    if (route === "seller/earnings") {
+      logRouteSelection(req, route, "handleSellerEarnings");
+      return handleSellerEarnings(req, res);
+    }
+    if (route === "seller/profile") {
+      logRouteSelection(req, route, "handleSellerProfile");
+      return handleSellerProfile(req, res);
+    }
     if (route === "services" && method === "GET") return handlePublicServices(res);
     if (route === "jobs" && method === "GET") return handlePublicJobs(res);
     if (route === "orders") return handleOrders(req, res);
     if (route === "transactions") return handleTransactions(req, res);
     if (route === "applications") return handleApplications(req, res);
     if (route === "ai-photo") return handleAIPhoto(req, res);
-    if (route === "seller/services") return handleSellerServices(req, res);
-    if (route === "seller/orders") return handleSellerOrders(req, res);
-    if (route === "seller/earnings") return handleSellerEarnings(req, res);
     if (route === "recruiter/jobs") return handleRecruiterJobs(req, res);
     if (route === "recruiter/applicants") return handleRecruiterApplicants(req, res);
     if (route === "recruiter/talent-pool") return handleRecruiterTalent(req, res);
     if (route === "recruiter/stats") return handleRecruiterStats(req, res);
+    if (route === "recruiter/profile") return handleRecruiterProfile(req, res);
     if (route === "resume-builder" || route.startsWith("resume-builder/")) return handleResumeBuilder(route, req, res);
+
+    if (route.includes("seller") || String(req.url || "").includes("seller")) {
+      console.warn("[api route unmatched seller]", {
+        method,
+        url: req.url,
+        normalizedPathname: normalizeApiPath(req),
+        route,
+      });
+    }
 
     return sendError(res, 404, `Endpoint /api/${route} tidak ditemukan.`);
   } catch (error) {

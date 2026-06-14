@@ -8,15 +8,6 @@ interface OrderManagerProps {
   onUpdateOrderStatus?: (orderId: string, status: "Baru" | "Sedang Diproses" | "Selesai" | "Dibatalkan", resultUrl?: string) => void;
 }
 
-const seedOrders = [
-  { id: "ORD-001", initials: "BS", serviceTitle: "Review CV Profesional", buyerName: "Budi Santoso", price: 250000, time: "2 jam yang lalu", status: "Baru", note: "" },
-  { id: "ORD-002", initials: "SA", serviceTitle: "Mock Interview", buyerName: "Siti Aminah", price: 350000, time: "5 jam yang lalu", status: "Sedang Diproses", note: "Deadline: 2 hari" },
-  { id: "ORD-003", initials: "AR", serviceTitle: "Career Coaching Premium", buyerName: "Ahmad Rizki", price: 500000, time: "2 hari yang lalu", status: "Selesai", note: "Diselesaikan 1 hari yang lalu" },
-  { id: "ORD-004", initials: "DL", serviceTitle: "Optimasi LinkedIn Profile", buyerName: "Dewi Lestari", price: 300000, time: "1 hari yang lalu", status: "Sedang Diproses", note: "Deadline: 4 hari" },
-  { id: "ORD-005", initials: "RH", serviceTitle: "Review CV Profesional", buyerName: "Rudi Hartono", price: 250000, time: "5 hari yang lalu", status: "Selesai", note: "Diselesaikan 2 hari yang lalu" },
-  { id: "ORD-006", initials: "MS", serviceTitle: "Mock Interview", buyerName: "Maya Sari", price: 350000, time: "1 minggu yang lalu", status: "Dibatalkan", note: "Dibatalkan oleh pelanggan" }
-];
-
 const formatPrice = (price: number) =>
   new Intl.NumberFormat("id-ID", {
     style: "currency",
@@ -75,11 +66,8 @@ const toSellerOrder = (order: ServiceOrder) => ({
 export const OrderManager: React.FC<OrderManagerProps> = ({ orders: incomingOrders = [], onUpdateOrderStatus }) => {
   const [activeTab, setActiveTab] = useState("Semua");
   const [searchTerm, setSearchTerm] = useState("");
-  const [orders, setOrders] = useState(() => incomingOrders.length ? incomingOrders.map(toSellerOrder) : seedOrders);
-
-  React.useEffect(() => {
-    if (incomingOrders.length) setOrders(incomingOrders.map(toSellerOrder));
-  }, [incomingOrders]);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const orders = incomingOrders.map(toSellerOrder);
 
   const counts = {
     Baru: orders.filter((order) => order.status === "Baru").length,
@@ -95,9 +83,13 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ orders: incomingOrde
     return matchTab && matchSearch;
   });
 
-  const updateStatus = (orderId: string, status: string) => {
-    setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status, note: status === "Selesai" ? "Diselesaikan baru saja" : order.note } : order)));
-    onUpdateOrderStatus?.(orderId, status as "Baru" | "Sedang Diproses" | "Selesai" | "Dibatalkan");
+  const updateStatus = async (orderId: string, status: string) => {
+    setPendingId(orderId);
+    try {
+      await onUpdateOrderStatus?.(orderId, status as "Baru" | "Sedang Diproses" | "Selesai" | "Dibatalkan");
+    } finally {
+      setPendingId(null);
+    }
   };
 
   return (
@@ -145,7 +137,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ orders: incomingOrde
                 placeholder="Cari pesanan..."
               />
             </label>
-            <button className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-200 px-5 font-semibold text-slate-700 hover:bg-slate-50">
+            <button disabled title="Filter lanjutan belum tersedia" className="inline-flex h-11 cursor-not-allowed items-center gap-2 rounded-lg border border-slate-200 px-5 font-semibold text-slate-400">
               <Filter className="h-4 w-4" />
               Filter
             </button>
@@ -154,6 +146,14 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ orders: incomingOrde
       </section>
 
       <div className="mt-7 space-y-5">
+        {filtered.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+            <p className="text-base font-black text-slate-800">{orders.length ? "Pesanan tidak ditemukan." : "Belum ada pesanan."}</p>
+            <p className="mt-2 text-sm font-medium text-slate-500">
+              {orders.length ? "Coba ubah kata kunci atau tab status." : "Pesanan dari layanan seller Anda akan muncul di halaman ini."}
+            </p>
+          </div>
+        )}
         {filtered.map((order) => (
           <article key={order.id} className="rounded-2xl border border-slate-200 bg-white p-6">
             <div className="flex flex-col justify-between gap-5 md:flex-row md:items-start">
@@ -194,27 +194,27 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ orders: incomingOrde
             <div className="mt-5 flex gap-3 border-t border-slate-200 pt-5">
               {order.status === "Baru" && (
                 <>
-                  <button onClick={() => updateStatus(order.id, "Sedang Diproses")} className="h-11 flex-1 rounded-lg bg-purple-600 font-semibold text-white hover:bg-purple-700">
-                    Terima Pesanan
+                  <button disabled={pendingId === order.id} onClick={() => updateStatus(order.id, "Sedang Diproses")} className="h-11 flex-1 rounded-lg bg-purple-600 font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60">
+                    {pendingId === order.id ? "Memproses..." : "Terima Pesanan"}
                   </button>
-                  <button onClick={() => updateStatus(order.id, "Dibatalkan")} className="h-11 rounded-lg border border-slate-200 px-6 font-semibold text-slate-700 hover:bg-slate-50">
+                  <button disabled={pendingId === order.id} onClick={() => updateStatus(order.id, "Dibatalkan")} className="h-11 rounded-lg border border-slate-200 px-6 font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
                     Tolak
                   </button>
                 </>
               )}
               {order.status === "Sedang Diproses" && (
                 <>
-                  <button onClick={() => updateStatus(order.id, "Selesai")} className="h-11 flex-1 rounded-lg bg-emerald-600 font-semibold text-white hover:bg-emerald-700">
-                    Tandai Selesai
+                  <button disabled={pendingId === order.id} onClick={() => updateStatus(order.id, "Selesai")} className="h-11 flex-1 rounded-lg bg-emerald-600 font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
+                    {pendingId === order.id ? "Memproses..." : "Tandai Selesai"}
                   </button>
-                  <button className="h-11 rounded-lg border border-slate-200 px-6 font-semibold text-slate-700 hover:bg-slate-50">
-                    Hubungi Pelanggan
+                  <button disabled title="Kontak pelanggan belum tersedia" className="h-11 cursor-not-allowed rounded-lg border border-slate-200 px-6 font-semibold text-slate-400">
+                    Hubungi belum tersedia
                   </button>
                 </>
               )}
               {(order.status === "Selesai" || order.status === "Dibatalkan") && (
-                <button className="h-11 flex-1 rounded-lg bg-slate-100 font-semibold text-slate-700 hover:bg-slate-200">
-                  Lihat Detail
+                <button disabled title="Detail pesanan belum tersedia" className="h-11 flex-1 cursor-not-allowed rounded-lg bg-slate-100 font-semibold text-slate-400">
+                  Detail belum tersedia
                 </button>
               )}
             </div>
