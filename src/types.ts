@@ -61,13 +61,17 @@ export interface Transaction {
 
 export interface ServiceOrder {
   id: string;
+  serviceId?: string;
+  transactionId?: string;
   buyerName: string;
   buyerEmail: string;
   serviceTitle: string;
   servicePrice: number;
   date: string;
   status: "Baru" | "Sedang Diproses" | "Selesai" | "Dibatalkan";
+  orderStatus?: "pending" | "accepted" | "in_progress" | "completed" | "cancelled";
   requirements?: string;
+  sellerNotes?: string;
   resultUrl?: string; // e.g. review file or message
 }
 
