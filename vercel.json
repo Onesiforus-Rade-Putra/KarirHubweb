@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/seller/:path*",
+      "destination": "/api/[...route]?route=seller/:path*"
+    }
+  ]
+}

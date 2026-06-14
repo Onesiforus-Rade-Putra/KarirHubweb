@@ -1,9 +1,28 @@
 import { requireUser } from "./http.js";
 
+function sellerRequestInfo(req: any) {
+  let pathname = "";
+  try {
+    pathname = new URL(req.url || "/", `https://${req.headers.host || "localhost"}`).pathname;
+  } catch {
+    pathname = req.url || "";
+  }
+
+  return {
+    method: req.method,
+    pathname,
+    hasAuthorization: Boolean(req.headers.authorization),
+  };
+}
+
 export async function requireSeller(req: any, supabaseAdmin: any) {
   const { user, error } = await requireUser(req, supabaseAdmin);
 
   if (!user) {
+    console.error("[seller auth error] requireSeller missing/invalid user", {
+      ...sellerRequestInfo(req),
+      error,
+    });
     return { user: null, profile: null, error: error || "Session tidak valid.", status: 401 };
   }
 
@@ -14,10 +33,24 @@ export async function requireSeller(req: any, supabaseAdmin: any) {
     .single();
 
   if (profileError || !profile) {
+    console.error("[seller auth error] requireSeller failed to read user_profiles", {
+      ...sellerRequestInfo(req),
+      userId: user.id,
+      message: profileError?.message,
+      details: profileError?.details,
+      hint: profileError?.hint,
+      code: profileError?.code,
+    });
     return { user: null, profile: null, error: "Profil user belum tersedia.", status: 404 };
   }
 
   if (profile.role !== "seller") {
+    console.error("[seller auth error] requireSeller role mismatch", {
+      ...sellerRequestInfo(req),
+      userId: user.id,
+      role: profile.role,
+      expectedRole: "seller",
+    });
     return { user: null, profile, error: "Akses khusus seller.", status: 403 };
   }
 

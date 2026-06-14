@@ -32,6 +32,7 @@ import { ServiceManager } from "./components/Seller/ServiceManager";
 import { OrderManager } from "./components/Seller/OrderManager";
 import { ConsultationScheduler } from "./components/Seller/ConsultationScheduler";
 import { SellerEarnings } from "./components/Seller/SellerEarnings";
+import { SellerProfile } from "./components/Seller/SellerProfile";
 
 // Recruiter Components
 import { RecruiterDashboard } from "./components/Recruiter/RecruiterDashboard";
@@ -40,6 +41,7 @@ import { JobPoster } from "./components/Recruiter/JobPoster";
 import { ApplicantTracker } from "./components/Recruiter/ApplicantTracker";
 import { TalentPool } from "./components/Recruiter/TalentPool";
 import { RecruiterUpgrade } from "./components/Recruiter/RecruiterUpgrade";
+import { RecruiterProfile } from "./components/Recruiter/RecruiterProfile";
 
 import { Info, X } from "lucide-react";
 import { clearAuthToken, getCurrentUser } from "./lib/authApi";
@@ -73,6 +75,11 @@ import {
 } from "./lib/karirHubApi";
 
 const SAVED_JOBS_STORAGE_KEY = "karirhub_saved_jobs";
+type SellerDashboardErrors = {
+  services?: string;
+  orders?: string;
+  earnings?: string;
+};
 
 const readSavedJobs = () => {
   if (typeof window === "undefined") return ["job-1", "job-3"];
@@ -92,11 +99,13 @@ export default function App() {
   const [candidates, setCandidates] = useState<Candidate[]>(INITIAL_CANDIDATES);
   const [recruiterCandidates, setRecruiterCandidates] = useState<Candidate[]>(INITIAL_CANDIDATES);
   const [services, setServices] = useState<CareerService[]>(INITIAL_SERVICES);
-  const [sellerServices, setSellerServices] = useState<CareerService[]>(INITIAL_SERVICES);
+  const [sellerServices, setSellerServices] = useState<CareerService[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
   const [orders, setOrders] = useState<ServiceOrder[]>(INITIAL_ORDERS);
-  const [sellerOrders, setSellerOrders] = useState<ServiceOrder[]>(INITIAL_ORDERS);
+  const [sellerOrders, setSellerOrders] = useState<ServiceOrder[]>([]);
   const [sellerEarnings, setSellerEarnings] = useState<SellerEarningsSummary | null>(null);
+  const [sellerDashboardLoading, setSellerDashboardLoading] = useState(false);
+  const [sellerDashboardErrors, setSellerDashboardErrors] = useState<SellerDashboardErrors>({});
   const [sessions, setSessions] = useState<ConsultationSession[]>(INITIAL_SESSIONS);
   const [applicants, setApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
   const [recruiterApplicants, setRecruiterApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
@@ -178,16 +187,41 @@ export default function App() {
       .catch(() => triggerToast("Beberapa riwayat akun belum bisa diambil dari database.", "info"));
   }, [currentUser]);
 
+  const loadSellerDashboard = async () => {
+    if (!currentUser || currentUser.role !== "seller") return;
+
+    setSellerDashboardLoading(true);
+    setSellerDashboardErrors({});
+
+    const [servicesResult, ordersResult, earningsResult] = await Promise.allSettled([fetchSellerServices(), fetchSellerOrders(), fetchSellerEarnings()]);
+    const nextErrors: SellerDashboardErrors = {};
+
+    if (servicesResult.status === "fulfilled") {
+      setSellerServices(servicesResult.value.services);
+    } else {
+      nextErrors.services = servicesResult.reason instanceof Error ? servicesResult.reason.message : "GET /api/seller/services gagal.";
+    }
+
+    if (ordersResult.status === "fulfilled") {
+      setSellerOrders(ordersResult.value.orders);
+    } else {
+      nextErrors.orders = ordersResult.reason instanceof Error ? ordersResult.reason.message : "GET /api/seller/orders gagal.";
+    }
+
+    if (earningsResult.status === "fulfilled") {
+      setSellerEarnings(earningsResult.value.earnings);
+    } else {
+      nextErrors.earnings = earningsResult.reason instanceof Error ? earningsResult.reason.message : "GET /api/seller/earnings gagal.";
+    }
+
+    setSellerDashboardErrors(nextErrors);
+    setSellerDashboardLoading(false);
+  };
+
   useEffect(() => {
     if (!currentUser || currentUser.role !== "seller") return;
 
-    Promise.all([fetchSellerServices(), fetchSellerOrders(), fetchSellerEarnings()])
-      .then(([serviceResult, orderResult, earningsResult]) => {
-        setSellerServices(serviceResult.services);
-        setSellerOrders(orderResult.orders);
-        setSellerEarnings(earningsResult.earnings);
-      })
-      .catch(() => triggerToast("Dashboard seller masih memakai data cadangan karena API seller belum siap.", "info"));
+    loadSellerDashboard();
   }, [currentUser]);
 
   useEffect(() => {
@@ -351,8 +385,8 @@ export default function App() {
       setServices([service, ...services]);
       triggerToast(`Layanan Karir '${service.title}' dipublikasi ke marketplace pencari kerja!`, "success");
     } catch (error) {
-      setSellerServices([newSrv, ...sellerServices]);
       triggerToast(error instanceof Error ? error.message : "Gagal menyimpan layanan ke database.", "error");
+      throw error;
     }
   };
 
@@ -363,8 +397,8 @@ export default function App() {
       setServices(services.map((s) => s.id === service.id ? service : s));
       triggerToast("Data layanan berhasil diperbarui.", "success");
     } catch (error) {
-      setSellerServices(sellerServices.map((s) => s.id === updatedSrv.id ? updatedSrv : s));
       triggerToast(error instanceof Error ? error.message : "Gagal memperbarui layanan di database.", "error");
+      throw error;
     }
   };
 
@@ -375,8 +409,8 @@ export default function App() {
       setServices(services.map((s) => s.id === id ? service : s));
       triggerToast("Layanan karir dinonaktifkan.", "info");
     } catch (error) {
-      setSellerServices(sellerServices.map((s) => s.id === id ? { ...s, active: false } : s));
       triggerToast(error instanceof Error ? error.message : "Gagal menonaktifkan layanan di database.", "error");
+      throw error;
     }
   };
 
@@ -391,8 +425,8 @@ export default function App() {
       fetchSellerEarnings().then(({ earnings }) => setSellerEarnings(earnings)).catch(() => undefined);
       triggerToast(`Pesanan ${orderId} diperbarui menjadi status: ${status}`, "success");
     } catch (error) {
-      setSellerOrders(sellerOrders.map((o) => o.id === orderId ? { ...o, status, resultUrl } : o));
-      triggerToast(error instanceof Error ? error.message : `Pesanan ${orderId} diperbarui secara lokal.`, "info");
+      triggerToast(error instanceof Error ? error.message : `Gagal memperbarui pesanan ${orderId}.`, "error");
+      throw error;
     }
   };
 
@@ -402,9 +436,8 @@ export default function App() {
   };
 
   // Tarik Saldo
-  const handleWithdrawFunds = (amount: number, bank: string, accountNo: string) => {
-    const wdId = `WD-${Math.floor(100 + Math.random() * 900)}`;
-    triggerToast(`Pengajuan transfer Rp ${amount.toLocaleString()} ke ${bank} terkonfirmasi!`, "success");
+  const handleUnavailableSellerAction = (message = "Fitur ini belum tersedia pada tahap stabilisasi dashboard seller.") => {
+    triggerToast(message, "info");
   };
 
   // Recruiter Job post management
@@ -538,7 +571,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === "profil" && (
+        {activeTab === "profil" && currentRole === "seeker" && (
           <UserProfile
             currentUser={currentUser}
             onUpdateName={handleUpdateUserName}
@@ -606,6 +639,9 @@ export default function App() {
                 orders={sellerOrders}
                 services={sellerServices}
                 earnings={sellerEarnings}
+                isLoading={sellerDashboardLoading}
+                errors={sellerDashboardErrors}
+                onRetry={loadSellerDashboard}
                 setActiveTab={setActiveTab}
               />
             )}
@@ -637,9 +673,16 @@ export default function App() {
               <SellerEarnings
                 earnings={sellerEarnings}
                 orders={sellerOrders}
-                onWithdrawFunds={handleWithdrawFunds}
+                onUnavailableAction={handleUnavailableSellerAction}
                 toast={(msg, st) => triggerToast(msg, st as any)}
                 setActiveTab={setActiveTab}
+              />
+            )}
+
+            {activeTab === "profil" && (
+              <SellerProfile
+                currentUser={currentUser}
+                toast={(msg, st) => triggerToast(msg, st as any)}
               />
             )}
           </>
@@ -693,6 +736,13 @@ export default function App() {
 
             {activeTab === "recruiter-upgrade" && (
               <RecruiterUpgrade
+                toast={(msg, st) => triggerToast(msg, st as any)}
+              />
+            )}
+
+            {activeTab === "profil" && (
+              <RecruiterProfile
+                currentUser={currentUser}
                 toast={(msg, st) => triggerToast(msg, st as any)}
               />
             )}

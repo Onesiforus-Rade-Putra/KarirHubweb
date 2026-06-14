@@ -17,7 +17,8 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(payload.error || "Permintaan ke server gagal.");
+    const detailText = typeof payload.details === "string" ? ` (${payload.details})` : "";
+    throw new Error(`${path}: ${payload.error || "Permintaan ke server gagal."}${detailText}`);
   }
 
   return payload as T;
@@ -409,6 +410,57 @@ export async function fetchUserSettings() {
 
 export async function updateUserSettings(payload: Partial<UserProfileSettings>) {
   return apiRequest<{ settings: UserProfileSettings }>("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface SellerProfilePayload {
+  basic: {
+    photoUrl: string;
+    fullName: string;
+    tagline: string;
+    bio: string;
+  };
+  specializations: string[];
+  experiences: Array<{ id: string; position: string; company: string; startDate: string; endDate: string; description: string }>;
+  certificates: Array<{ id: string; name: string; issuer: string; year: string }>;
+  portfolios: Array<{ id: string; title: string; description: string; link: string }>;
+}
+
+export interface RecruiterProfilePayload {
+  company: {
+    logoUrl: string;
+    companyName: string;
+    industry: string;
+    companySize: string;
+    companyEmail: string;
+    phone: string;
+    website: string;
+    about: string;
+  };
+  benefits: string[];
+  locations: Array<{ id: string; name: string; address: string; city: string; officeType: "Head Office" | "Branch Office" }>;
+  teamMembers: Array<{ id: string; name: string; position: string; email: string }>;
+}
+
+export async function fetchSellerProfile() {
+  return apiRequest<{ profile: SellerProfilePayload }>("/api/seller/profile");
+}
+
+export async function updateSellerProfile(payload: SellerProfilePayload) {
+  return apiRequest<{ profile: SellerProfilePayload }>("/api/seller/profile", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchRecruiterProfile() {
+  return apiRequest<{ profile: RecruiterProfilePayload }>("/api/recruiter/profile");
+}
+
+export async function updateRecruiterProfile(payload: RecruiterProfilePayload) {
+  return apiRequest<{ profile: RecruiterProfilePayload }>("/api/recruiter/profile", {
     method: "PATCH",
     body: JSON.stringify(payload),
   });

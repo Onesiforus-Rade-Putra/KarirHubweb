@@ -9,57 +9,6 @@ interface ServiceManagerProps {
   onDeleteService: (id: string) => void | Promise<void>;
 }
 
-const sellerServices = [
-  {
-    id: "seller-service-1",
-    title: "Review CV Profesional",
-    category: "CV & Resume",
-    description: "Review mendalam CV Anda dengan saran perbaikan dari profesional HR",
-    price: 250000,
-    duration: "3 hari",
-    sold: 78,
-    rating: 4.9,
-    reviews: 56,
-    active: true
-  },
-  {
-    id: "seller-service-2",
-    title: "Mock Interview",
-    category: "Interview Preparation",
-    description: "Simulasi interview dengan feedback detail untuk persiapan optimal",
-    price: 350000,
-    duration: "60 menit",
-    sold: 23,
-    rating: 4.7,
-    reviews: 18,
-    active: true
-  },
-  {
-    id: "seller-service-3",
-    title: "Career Coaching Premium",
-    category: "Coaching",
-    description: "Konsultasi karir mendalam dengan strategi pengembangan karir personal",
-    price: 500000,
-    duration: "90 menit",
-    sold: 45,
-    rating: 4.8,
-    reviews: 32,
-    active: true
-  },
-  {
-    id: "seller-service-4",
-    title: "Optimasi LinkedIn Profile",
-    category: "Personal Branding",
-    description: "Optimasi profil LinkedIn untuk meningkatkan visibilitas profesional Anda",
-    price: 300000,
-    duration: "5 hari",
-    sold: 12,
-    rating: 4.6,
-    reviews: 9,
-    active: false
-  }
-];
-
 const formatPrice = (price: number) =>
   new Intl.NumberFormat("id-ID", {
     style: "currency",
@@ -95,30 +44,19 @@ export const ServiceManager: React.FC<ServiceManagerProps> = ({
   onUpdateService,
   onDeleteService
 }) => {
-  const [items, setItems] = useState(() => services.length ? services : sellerServices.map((service) => ({
-    id: service.id,
-    title: service.title,
-    providerName: "John Doe",
-    providerAvatar: "JD",
-    category: service.title.includes("Mock") ? "mock-interview" as const : service.title.includes("Career") ? "consulting" as const : "cv-review" as const,
-    rating: service.rating,
-    reviewsCount: service.reviews,
-    price: service.price,
-    duration: service.duration,
-    description: service.description,
-    active: service.active
-  })));
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+  const reviewedServices = services.filter((item) => item.reviewsCount > 0 && item.rating > 0);
+  const averageRating = reviewedServices.length
+    ? (reviewedServices.reduce((total, item) => total + item.rating, 0) / reviewedServices.length).toFixed(1)
+    : "-";
 
-  React.useEffect(() => {
-    if (services.length) setItems(services);
-  }, [services]);
-
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const srv: CareerService = {
       id: `service-${Date.now()}`,
       title: "Layanan Karir Baru",
-      providerName: "John Doe",
-      providerAvatar: "JD",
+      providerName: "Seller KarirHub",
+      providerAvatar: "KH",
       category: "consulting",
       rating: 5,
       reviewsCount: 0,
@@ -127,22 +65,26 @@ export const ServiceManager: React.FC<ServiceManagerProps> = ({
       description: "Layanan baru untuk pelanggan KarirHub.",
       active: true
     };
-    onAddService(srv);
-    setItems((prev) => [srv, ...prev]);
+    setIsAdding(true);
+    try {
+      await onAddService(srv);
+    } finally {
+      setIsAdding(false);
+    }
   };
 
   const toggleService = async (id: string) => {
-    setItems((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-        const updated = { ...item, active: !item.active };
-        onUpdateService(updated);
-        return updated;
-      })
-    );
+    const service = services.find((item) => item.id === id);
+    if (!service) return;
+    setPendingId(id);
+    try {
+      await onUpdateService({ ...service, active: !service.active });
+    } finally {
+      setPendingId(null);
+    }
   };
 
-  const editService = (service: CareerService) => {
+  const editService = async (service: CareerService) => {
     const title = window.prompt("Nama layanan", service.title);
     if (!title) return;
 
@@ -151,13 +93,21 @@ export const ServiceManager: React.FC<ServiceManagerProps> = ({
     if (!price) return;
 
     const updated = { ...service, title, price };
-    setItems((prev) => prev.map((item) => (item.id === service.id ? updated : item)));
-    onUpdateService(updated);
+    setPendingId(service.id);
+    try {
+      await onUpdateService(updated);
+    } finally {
+      setPendingId(null);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    setItems((prev) => prev.filter((item) => item.id !== id));
-    onDeleteService(id);
+  const handleDelete = async (id: string) => {
+    setPendingId(id);
+    try {
+      await onDeleteService(id);
+    } finally {
+      setPendingId(null);
+    }
   };
 
   return (
@@ -169,23 +119,31 @@ export const ServiceManager: React.FC<ServiceManagerProps> = ({
         </div>
         <button
           onClick={handleAdd}
-          className="inline-flex h-14 items-center justify-center gap-3 rounded-lg bg-purple-600 px-8 text-lg font-semibold text-white transition hover:bg-purple-700"
+          disabled={isAdding}
+          className="inline-flex h-14 items-center justify-center gap-3 rounded-lg bg-purple-600 px-8 text-lg font-semibold text-white transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Plus className="h-5 w-5" />
-          Tambah Layanan
+          {isAdding ? "Menyimpan..." : "Tambah Layanan"}
         </button>
       </div>
 
       <div className="mt-10 grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon={Box} label="Total Layanan" value={`${items.length}`} tone="bg-purple-50 text-purple-600" />
-        <StatCard icon={ToggleRight} label="Layanan Aktif" value={`${items.filter((item) => item.active).length}`} tone="bg-emerald-50 text-emerald-600" />
-        <StatCard icon={DollarSign} label="Total Terjual" value={`${items.reduce((total, item: any) => total + (item.sold || 0), 0)}`} tone="bg-blue-50 text-blue-600" />
-        <StatCard icon={Star} label="Rating Rata-rata" value="4.8" tone="bg-orange-50 text-orange-600" />
+        <StatCard icon={Box} label="Total Layanan" value={`${services.length}`} tone="bg-purple-50 text-purple-600" />
+        <StatCard icon={ToggleRight} label="Layanan Aktif" value={`${services.filter((item) => item.active).length}`} tone="bg-emerald-50 text-emerald-600" />
+        <StatCard icon={DollarSign} label="Total Review" value={`${services.reduce((total, item) => total + item.reviewsCount, 0)}`} tone="bg-blue-50 text-blue-600" />
+        <StatCard icon={Star} label="Rating Rata-rata" value={averageRating} tone="bg-orange-50 text-orange-600" />
       </div>
 
       <section className="mt-9 rounded-2xl border border-slate-200 bg-white p-8">
         <div className="space-y-7">
-          {items.map((service) => (
+          {services.length === 0 && (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+              <p className="text-base font-black text-slate-800">Belum ada layanan.</p>
+              <p className="mt-2 text-sm font-medium text-slate-500">Gunakan tombol Tambah Layanan untuk membuat layanan seller pertama Anda.</p>
+            </div>
+          )}
+
+          {services.map((service) => (
             <article key={service.id} className="rounded-2xl border border-slate-200 bg-white p-7">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-2xl font-black text-slate-950">{service.title}</h2>
@@ -211,7 +169,7 @@ export const ServiceManager: React.FC<ServiceManagerProps> = ({
                 </div>
                 <div className="rounded-lg bg-emerald-50 p-4">
                   <p className="text-sm text-slate-500">Terjual</p>
-                  <p className="mt-2 text-xl font-black text-emerald-600">{(service as any).sold || 0}x</p>
+                  <p className="mt-2 text-xl font-black text-emerald-600">Belum tersedia</p>
                 </div>
                 <div className="rounded-lg bg-orange-50 p-4">
                   <p className="text-sm text-slate-500">Rating</p>
@@ -224,28 +182,30 @@ export const ServiceManager: React.FC<ServiceManagerProps> = ({
 
               <div className="mt-6 flex flex-col justify-between gap-3 border-t border-slate-200 pt-5 lg:flex-row">
                 <div className="flex flex-wrap gap-3">
-                  <button onClick={() => editService(service)} className="inline-flex h-11 items-center gap-2 rounded-lg bg-purple-600 px-6 font-semibold text-white hover:bg-purple-700">
+                  <button disabled={pendingId === service.id} onClick={() => editService(service)} className="inline-flex h-11 items-center gap-2 rounded-lg bg-purple-600 px-6 font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60">
                     <Edit3 className="h-4 w-4" />
                     Edit Layanan
                   </button>
                   <button
+                    disabled={pendingId === service.id}
                     onClick={() => toggleService(service.id)}
-                    className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-700 hover:bg-slate-50"
+                    className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {service.active ? <ToggleLeft className="h-4 w-4" /> : <ToggleRight className="h-4 w-4" />}
                     {service.active ? "Nonaktifkan" : "Aktifkan"}
                   </button>
                   <button
+                    disabled={pendingId === service.id}
                     onClick={() => handleDelete(service.id)}
-                    className="inline-flex h-11 items-center gap-2 rounded-lg border border-red-200 px-6 font-semibold text-red-600 hover:bg-red-50"
+                    className="inline-flex h-11 items-center gap-2 rounded-lg border border-red-200 px-6 font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Trash2 className="h-4 w-4" />
                     Hapus
                   </button>
                 </div>
-                <button className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-700 hover:bg-slate-50">
+                <button disabled title="Statistik layanan belum tersedia" className="inline-flex h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-400">
                   <Eye className="h-4 w-4" />
-                  Lihat Statistik
+                  Statistik belum tersedia
                 </button>
               </div>
             </article>
