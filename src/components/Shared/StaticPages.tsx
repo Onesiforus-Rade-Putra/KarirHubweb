@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Bell, CreditCard, FileText, HelpCircle, Loader2, Lock, Mail, Plus, Shield, Trash2, UserRound } from "lucide-react";
+import { Bell, FileText, HelpCircle, Loader2, Lock, LogOut, Mail, RefreshCw, Shield, UserRound } from "lucide-react";
 import { fetchUserSettings, updateUserSettings, UserProfileSettings } from "../../lib/karirHubApi";
 
 const PageShell = ({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) => (
@@ -12,7 +12,12 @@ const PageShell = ({ title, subtitle, children }: { title: string; subtitle: str
   </div>
 );
 
-export const SettingsPage: React.FC<{ currentUser: any; toast: (msg: string, status?: string) => void }> = ({ currentUser, toast }) => {
+export const SettingsPage: React.FC<{
+  currentUser: any;
+  toast: (msg: string, status?: string) => void;
+  onHelp?: () => void;
+  onLogout?: () => void;
+}> = ({ currentUser, toast, onHelp, onLogout }) => {
   const [settings, setSettings] = useState<UserProfileSettings>({
     language: "id",
     region: "ID",
@@ -23,10 +28,9 @@ export const SettingsPage: React.FC<{ currentUser: any; toast: (msg: string, sta
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
-  const [paymentLabel, setPaymentLabel] = useState("");
-  const [paymentDetail, setPaymentDetail] = useState("");
 
-  useEffect(() => {
+  const loadSettings = () => {
+    setIsLoading(true);
     fetchUserSettings()
       .then(({ settings: loaded }) => {
         setSettings(loaded);
@@ -36,6 +40,10 @@ export const SettingsPage: React.FC<{ currentUser: any; toast: (msg: string, sta
         setError(err instanceof Error ? err.message : "Pengaturan belum bisa dimuat dari server.");
       })
       .finally(() => setIsLoading(false));
+  };
+
+  useEffect(() => {
+    loadSettings();
   }, []);
 
   const saveSettings = async (next: UserProfileSettings, message = "Pengaturan berhasil disimpan.") => {
@@ -47,31 +55,11 @@ export const SettingsPage: React.FC<{ currentUser: any; toast: (msg: string, sta
       setError("");
       toast(message, "success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Pengaturan tersimpan lokal untuk sesi ini.");
-      toast("Pengaturan tersimpan lokal untuk sesi ini.", "info");
+      setError(err instanceof Error ? err.message : "Gagal menyimpan pengaturan.");
+      toast(err instanceof Error ? err.message : "Gagal menyimpan pengaturan.", "error");
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const addPaymentMethod = (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!paymentLabel.trim() || !paymentDetail.trim()) return;
-    const next = {
-      ...settings,
-      paymentMethods: [
-        ...settings.paymentMethods,
-        {
-          id: `local-${Date.now()}`,
-          label: paymentLabel.trim(),
-          detail: paymentDetail.trim(),
-          primary: settings.paymentMethods.length === 0
-        }
-      ]
-    };
-    setPaymentLabel("");
-    setPaymentDetail("");
-    saveSettings(next, "Metode pembayaran disimpan.");
   };
 
   if (isLoading) {
@@ -87,7 +75,15 @@ export const SettingsPage: React.FC<{ currentUser: any; toast: (msg: string, sta
 
   return (
     <PageShell title="Pengaturan" subtitle="Kelola preferensi dasar akun KarirHub Anda.">
-      {error && <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">{error}</div>}
+      {error && (
+        <div className="mb-5 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+          <span>{error}</span>
+          <button onClick={loadSettings} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-amber-600 px-3 text-xs font-black text-white hover:bg-amber-700">
+            <RefreshCw className="h-3.5 w-3.5" />
+            Coba Lagi
+          </button>
+        </div>
+      )}
       <div className="grid gap-5 md:grid-cols-2">
         <section className="rounded-xl border border-slate-200 p-5">
           <div className="flex items-center gap-3">
@@ -158,45 +154,38 @@ export const SettingsPage: React.FC<{ currentUser: any; toast: (msg: string, sta
 
       <section className="mt-5 rounded-xl border border-slate-200 p-5">
         <div className="flex items-center gap-3">
-          <CreditCard className="h-5 w-5 text-amber-600" />
-          <h2 className="text-lg font-black">Metode Pembayaran Lokal</h2>
+          <Lock className="h-5 w-5 text-emerald-600" />
+          <h2 className="text-lg font-black">Keamanan Akun</h2>
         </div>
-        <p className="mt-2 text-sm leading-6 text-slate-500">Data ini hanya preferensi sederhana, belum terhubung payment gateway atau webhook.</p>
-        <form onSubmit={addPaymentMethod} className="mt-5 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-          <input value={paymentLabel} onChange={(event) => setPaymentLabel(event.target.value)} placeholder="Nama metode, contoh: BCA" className="h-11 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500" />
-          <input value={paymentDetail} onChange={(event) => setPaymentDetail(event.target.value)} placeholder="Detail, contoh: **** 1234" className="h-11 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500" />
-          <button type="submit" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-bold text-white">
-            <Plus className="h-4 w-4" />
-            Tambah
-          </button>
-        </form>
-        {settings.paymentMethods.length === 0 ? (
-          <p className="mt-4 rounded-lg border border-dashed border-slate-200 p-4 text-sm font-semibold text-slate-400">Belum ada metode pembayaran.</p>
-        ) : (
-          <div className="mt-4 space-y-3">
-            {settings.paymentMethods.map((method) => (
-              <div key={method.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-4">
-                <div>
-                  <p className="font-black text-slate-900">{method.label}</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">{method.detail}</p>
-                </div>
-                <button onClick={() => saveSettings({ ...settings, paymentMethods: settings.paymentMethods.filter((item) => item.id !== method.id) }, "Metode pembayaran dihapus.")} className="rounded-lg p-2 text-red-500 hover:bg-red-50">
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <p className="mt-3 text-sm leading-6 text-slate-600">
+          Perubahan password dikelola oleh alur autentikasi dan tidak diubah pada tahap audit ini. Bila ada aktivitas mencurigakan, logout lalu masuk ulang dari perangkat tepercaya.
+        </p>
+        <button
+          type="button"
+          onClick={onLogout}
+          className="mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-red-200 px-5 text-sm font-black text-red-600 hover:bg-red-50"
+        >
+          <LogOut className="h-4 w-4" />
+          Logout
+        </button>
       </section>
 
       <section className="mt-5 rounded-xl border border-slate-200 p-5">
         <div className="flex items-center gap-3">
-          <Lock className="h-5 w-5 text-emerald-600" />
-          <h2 className="text-lg font-black">Keamanan</h2>
+          <HelpCircle className="h-5 w-5 text-blue-600" />
+          <h2 className="text-lg font-black">Bantuan</h2>
         </div>
         <p className="mt-3 text-sm leading-6 text-slate-600">
-          Perubahan password tidak diaktifkan pada tahap ini agar alur register/login/logout tetap aman. Penghapusan akun permanen juga dinonaktifkan; gunakan halaman Bantuan untuk membuat request manual.
+          Butuh bantuan untuk layanan, pesanan, jadwal, atau saldo seller? Buka halaman Bantuan untuk membuat catatan permintaan.
         </p>
+        <button
+          type="button"
+          onClick={onHelp}
+          className="mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-sm font-black text-white hover:bg-blue-700"
+        >
+          <Mail className="h-4 w-4" />
+          Buka Bantuan
+        </button>
       </section>
     </PageShell>
   );

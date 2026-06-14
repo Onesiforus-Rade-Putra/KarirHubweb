@@ -329,7 +329,7 @@ export const ConsultationScheduler: React.FC<ScheduleProps> = ({
                   className="w-full rounded-lg border border-slate-200 p-4 text-left hover:bg-slate-50"
                 >
                   <p className="font-bold text-slate-900">{fullDayNames[slot.dayOfWeek]}</p>
-                  <p className="mt-1 text-sm text-slate-500">{slot.startTime} - {slot.endTime} · {slot.active ? "Aktif" : "Nonaktif"}</p>
+                  <p className="mt-1 text-sm text-slate-500">{slot.startTime} - {slot.endTime} - {slot.active ? "Aktif" : "Nonaktif"}</p>
                 </button>
               ))}
             </div>
@@ -472,7 +472,7 @@ export const ConsultationScheduler: React.FC<ScheduleProps> = ({
                   {action.type === "reschedule" && "Reschedule Sesi"}
                   {action.type === "meeting" && "Simpan Link Meeting"}
                 </h2>
-                <p className="mt-2 text-slate-600">{action.session.clientName} · {action.session.serviceTitle}</p>
+                <p className="mt-2 text-slate-600">{action.session.clientName} - {action.session.serviceTitle}</p>
               </div>
               <button onClick={() => setAction(null)} disabled={pendingId === action.session.id} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50" aria-label="Tutup modal">
                 <X className="h-5 w-5" />

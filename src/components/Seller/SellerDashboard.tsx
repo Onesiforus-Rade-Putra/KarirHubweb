@@ -184,7 +184,7 @@ export const SellerDashboard: React.FC<SellerDashboardProps> = ({ currentUser, o
                         <button onClick={() => setActiveTab("seller-services")} className="h-10 flex-1 rounded-lg bg-purple-600 font-semibold text-white hover:bg-purple-700">
                           Edit
                         </button>
-                        <button disabled title="Statistik layanan belum tersedia" className="h-10 cursor-not-allowed rounded-lg border border-slate-200 px-5 font-semibold text-slate-400">
+                        <button onClick={() => setActiveTab("seller-earnings")} className="h-10 rounded-lg border border-slate-200 px-5 font-semibold text-slate-700 hover:bg-slate-50">
                           Statistik
                         </button>
                       </div>

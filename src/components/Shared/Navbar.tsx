@@ -27,6 +27,12 @@ interface NavbarProps {
   setActiveTab: (tab: string) => void;
   user: any;
   onLogout: () => void;
+  notifications?: Array<{
+    id: string;
+    title: string;
+    description: string;
+    tab?: string;
+  }>;
 }
 
 const roleAccent = {
@@ -86,7 +92,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
   user,
-  onLogout
+  onLogout,
+  notifications = []
 }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -117,7 +124,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     purple: "bg-purple-600 text-white hover:bg-purple-700",
     emerald: "bg-emerald-600 text-white hover:bg-emerald-700"
   }[accent];
-  const notifications = ["Notifikasi real belum tersedia pada tahap stabilisasi ini."];
+  const unreadCount = notifications.length;
 
   return (
     <nav className="sticky top-0 z-50 border-b border-slate-100 bg-white">
@@ -198,7 +205,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 aria-expanded={notificationsOpen}
               >
                 <Bell className="h-5 w-5" />
-                <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-slate-300" />
+                <span className={`absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white ${unreadCount > 0 ? "bg-red-500" : "bg-slate-300"}`} />
               </button>
               {notificationsOpen && (
                 <div className="absolute right-0 top-12 w-80 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-xl">
@@ -209,9 +216,23 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </button>
                   </div>
                   <div className="mt-2 space-y-2">
+                    {notifications.length === 0 && (
+                      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm">
+                        <p className="font-black text-slate-800">Belum ada notifikasi baru.</p>
+                        <p className="mt-1 font-medium text-slate-500">Pesanan, jadwal, dan status saldo seller akan muncul di sini saat ada pembaruan.</p>
+                      </div>
+                    )}
                     {notifications.map((item) => (
-                      <button key={item} disabled className="w-full cursor-not-allowed rounded-lg bg-slate-50 p-3 text-left text-sm font-semibold text-slate-500">
-                        {item}
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          if (item.tab) setActiveTab(item.tab);
+                          setNotificationsOpen(false);
+                        }}
+                        className="w-full rounded-lg bg-slate-50 p-3 text-left hover:bg-slate-100"
+                      >
+                        <span className="block text-sm font-black text-slate-900">{item.title}</span>
+                        <span className="mt-1 block text-xs font-semibold leading-5 text-slate-500">{item.description}</span>
                       </button>
                     ))}
                   </div>
