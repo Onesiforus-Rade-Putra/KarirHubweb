@@ -77,12 +77,28 @@ export interface ServiceOrder {
 
 export interface ConsultationSession {
   id: string;
+  orderId?: string;
+  serviceId?: string;
   clientName: string;
+  clientEmail?: string;
   serviceTitle: string;
   date: string;
+  scheduledDate?: string;
+  startTime?: string;
+  endTime?: string;
   timeSlot: string;
-  status: "Mendatang" | "Selesai" | "Dibatalkan" | "Rescheduled";
+  status: "pending" | "confirmed" | "rejected" | "rescheduled" | "completed" | "cancelled" | "Mendatang" | "Selesai" | "Dibatalkan" | "Rescheduled";
+  sellerNotes?: string;
+  rejectionReason?: string;
   meetingUrl: string;
+}
+
+export interface SellerAvailability {
+  id: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  active: boolean;
 }
 
 export interface Applicant {
