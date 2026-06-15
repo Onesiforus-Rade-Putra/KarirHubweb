@@ -3,7 +3,8 @@ import { Job } from "../../types";
 import { Briefcase, FileText, MapPin } from "lucide-react";
 
 interface JobPosterProps {
-  onAddJob: (newJob: Job) => void;
+  onAddJob: (newJob: Job) => void | Promise<void>;
+  currentUser: any;
   setActiveTab: (tab: string) => void;
 }
 
@@ -19,7 +20,15 @@ const Field = ({ label, required, children }: { label: string; required?: boolea
 const inputClass = "h-12 w-full rounded-lg border border-slate-200 px-4 text-base outline-none transition focus:border-emerald-500";
 const textareaClass = "w-full rounded-lg border border-slate-200 px-4 py-4 text-base outline-none transition focus:border-emerald-500";
 
-export const JobPoster: React.FC<JobPosterProps> = ({ onAddJob, setActiveTab }) => {
+const initials = (value: string) =>
+  value
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "KH";
+
+export const JobPoster: React.FC<JobPosterProps> = ({ onAddJob, currentUser, setActiveTab }) => {
   const [title, setTitle] = useState("");
   const [department, setDepartment] = useState("");
   const [level, setLevel] = useState("");
@@ -32,13 +41,14 @@ export const JobPoster: React.FC<JobPosterProps> = ({ onAddJob, setActiveTab }) 
   const [benefits, setBenefits] = useState("");
   const [closingDate, setClosingDate] = useState("");
 
-  const publish = (status: Job["status"]) => {
+  const publish = async (status: Job["status"]) => {
     if (!title || !location || !description) return;
-    onAddJob({
+    const companyName = currentUser?.company || "";
+    await onAddJob({
       id: `job-${Date.now()}`,
       title,
-      company: "PT Tech Indonesia",
-      companyLogo: "PT",
+      company: companyName,
+      companyLogo: initials(companyName || currentUser?.name || ""),
       location,
       type,
       salaryMin: Number(salaryMin || 0),
@@ -64,7 +74,7 @@ export const JobPoster: React.FC<JobPosterProps> = ({ onAddJob, setActiveTab }) 
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          publish("aktif");
+          publish("aktif").catch(() => undefined);
         }}
         className="mt-8 rounded-2xl border border-slate-200 bg-white p-8"
       >
@@ -165,7 +175,7 @@ export const JobPoster: React.FC<JobPosterProps> = ({ onAddJob, setActiveTab }) 
 
         <div className="mt-8 flex flex-col gap-4 border-t border-slate-200 pt-6 md:flex-row">
           <button type="submit" className="h-12 flex-1 rounded-lg bg-emerald-600 font-semibold text-white hover:bg-emerald-700">Publikasikan Lowongan</button>
-          <button type="button" onClick={() => publish("draft")} className="h-12 rounded-lg border border-slate-200 px-8 font-semibold text-slate-700 hover:bg-slate-50">Simpan sebagai Draft</button>
+          <button type="button" onClick={() => publish("draft").catch(() => undefined)} className="h-12 rounded-lg border border-slate-200 px-8 font-semibold text-slate-700 hover:bg-slate-50">Simpan sebagai Draft</button>
           <button type="button" onClick={() => setActiveTab("recruiter-dashboard")} className="h-12 rounded-lg border border-slate-200 px-8 font-semibold text-slate-700 hover:bg-slate-50">Batal</button>
         </div>
       </form>

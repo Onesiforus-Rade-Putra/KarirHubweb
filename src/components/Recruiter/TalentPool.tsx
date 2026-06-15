@@ -1,22 +1,16 @@
 import React, { useState } from "react";
 import { Candidate } from "../../types";
-import { Bookmark, Briefcase, Download, Filter, Mail, MapPin, Search, Star, Users } from "lucide-react";
+import { AlertCircle, Bookmark, Briefcase, Download, Filter, Loader2, Mail, MapPin, RotateCcw, Search, Star, Users, X } from "lucide-react";
 
 interface TalentPoolProps {
   candidates: Candidate[];
+  isLoading: boolean;
+  error?: string;
+  onRetry: () => void;
   onToggleBookmarkCandidate: (id: string) => void;
   savedCandidatesOnly: boolean;
   setSavedCandidatesOnly: (val: boolean) => void;
 }
-
-const talentCards = [
-  { id: "cand-1", initials: "BS", name: "Budi Santoso", title: "Senior Frontend Developer", rating: 4.8, status: "Tersedia", location: "Jakarta", exp: "5 tahun pengalaman", education: "S1 Teknik Informatika", salary: "Rp 15-20 Juta", skills: ["React", "TypeScript", "Next.js", "+1"], saved: true },
-  { id: "cand-2", initials: "SA", name: "Siti Aminah", title: "Product Manager", rating: 4.9, status: "Tersedia", location: "Remote", exp: "7 tahun pengalaman", education: "S1 Manajemen", salary: "Rp 18-25 Juta", skills: ["Product Strategy", "Agile", "Jira", "+1"], saved: true },
-  { id: "cand-3", initials: "AR", name: "Ahmad Rizki", title: "UI/UX Designer", rating: 4.7, status: "Tersedia", location: "Bandung", exp: "3 tahun pengalaman", education: "S1 Desain Komunikasi Visual", salary: "Rp 10-15 Juta", skills: ["Figma", "Adobe XD", "UI Design", "+1"], saved: false },
-  { id: "cand-4", initials: "DL", name: "Dewi Lestari", title: "Backend Engineer", rating: 4.8, status: "Tidak Tersedia", location: "Surabaya", exp: "6 tahun pengalaman", education: "S1 Sistem Informasi", salary: "Rp 16-22 Juta", skills: ["Node.js", "PostgreSQL", "Docker", "+1"], saved: true },
-  { id: "cand-5", initials: "RH", name: "Rudi Hartono", title: "Full Stack Developer", rating: 5, status: "Tersedia", location: "Jakarta", exp: "8 tahun pengalaman", education: "S2 Ilmu Komputer", salary: "Rp 20-28 Juta", skills: ["React", "Node.js", "MongoDB", "+1"], saved: false },
-  { id: "cand-6", initials: "MS", name: "Maya Sari", title: "Data Scientist", rating: 4.6, status: "Tersedia", location: "Remote", exp: "4 tahun pengalaman", education: "S2 Statistika", salary: "Rp 14-20 Juta", skills: ["Python", "Machine Learning", "TensorFlow", "+1"], saved: false }
-];
 
 const StatCard = ({ icon: Icon, label, value, tone }: { icon: React.ElementType; label: string; value: string; tone: string }) => (
   <div className="flex min-h-[118px] items-center gap-5 rounded-2xl border border-slate-200 bg-white px-6 py-5">
@@ -38,12 +32,48 @@ const candidateInitials = (name: string) =>
     .slice(0, 2)
     .toUpperCase() || "KH";
 
-export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBookmarkCandidate, savedCandidatesOnly, setSavedCandidatesOnly }) => {
+type TalentCard = {
+  id: string;
+  initials: string;
+  name: string;
+  title: string;
+  rating: number;
+  status: Candidate["status"];
+  location: string;
+  exp: string;
+  education: string;
+  salary: string;
+  skills: string[];
+  saved: boolean;
+  bio: string;
+  email: string;
+};
+
+const ErrorState = ({ message, onRetry }: { message: string; onRetry: () => void }) => (
+  <div className="mt-7 rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="flex items-center gap-2 font-black"><AlertCircle className="h-5 w-5" />{message}</p>
+      <button onClick={onRetry} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-black text-white hover:bg-red-700">
+        <RotateCcw className="h-4 w-4" />
+        Coba Lagi
+      </button>
+    </div>
+  </div>
+);
+
+const EmptyState = ({ title, description }: { title: string; description: string }) => (
+  <div className="col-span-full rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+    <p className="text-lg font-black text-slate-800">{title}</p>
+    <p className="mt-2 text-sm font-semibold text-slate-500">{description}</p>
+  </div>
+);
+
+export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, isLoading, error, onRetry, onToggleBookmarkCandidate, savedCandidatesOnly, setSavedCandidatesOnly }) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [availabilityFilter, setAvailabilityFilter] = useState<"Semua" | "Tersedia" | "Tidak Tersedia">("Semua");
-  const sourceCandidates = candidates.length
-    ? candidates.map((candidate) => ({
+  const [selectedCandidate, setSelectedCandidate] = useState<TalentCard | null>(null);
+  const sourceCandidates: TalentCard[] = candidates.map((candidate) => ({
         id: candidate.id,
         initials: candidateInitials(candidate.name),
         name: candidate.name,
@@ -54,10 +84,11 @@ export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBook
         exp: `${candidate.experienceYears} tahun pengalaman`,
         education: candidate.education,
         salary: candidate.expectedSalary ? `Rp ${candidate.expectedSalary.toLocaleString("id-ID")}` : "-",
-        skills: candidate.skills.length ? candidate.skills.slice(0, 4) : ["KarirHub"],
-        saved: candidate.savedByRecruiter
-      }))
-    : talentCards;
+        skills: candidate.skills.slice(0, 4),
+        saved: candidate.savedByRecruiter,
+        bio: candidate.bio,
+        email: candidate.email
+      }));
 
   const visible = sourceCandidates.filter((candidate) => {
     const matchSaved = savedCandidatesOnly ? candidate.saved : true;
@@ -65,6 +96,9 @@ export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBook
     const term = searchTerm.toLowerCase();
     return matchSaved && matchAvailability && (candidate.name.toLowerCase().includes(term) || candidate.title.toLowerCase().includes(term) || candidate.skills.join(" ").toLowerCase().includes(term));
   });
+  const averageRating = sourceCandidates.length
+    ? (sourceCandidates.reduce((total, candidate) => total + candidate.rating, 0) / sourceCandidates.length).toFixed(1)
+    : "-";
 
   return (
     <div className="mx-auto max-w-[1536px] px-8 py-12 text-left">
@@ -72,12 +106,13 @@ export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBook
         <h1 className="text-[40px] font-black leading-tight tracking-normal text-slate-950">Talent Pool</h1>
         <p className="mt-2 text-xl text-slate-600">Cari dan simpan kandidat potensial untuk kebutuhan rekrutmen Anda</p>
       </div>
+      {error && <ErrorState message={error} onRetry={onRetry} />}
 
       <div className="mt-10 grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-4">
         <StatCard icon={Users} label="Total Kandidat" value={`${sourceCandidates.length}`} tone="bg-emerald-50 text-emerald-600" />
         <StatCard icon={Bookmark} label="Kandidat Tersimpan" value={`${sourceCandidates.filter((candidate) => candidate.saved).length}`} tone="bg-purple-50 text-purple-600" />
-        <StatCard icon={Star} label="Rating Rata-rata" value="4.8" tone="bg-orange-50 text-orange-600" />
-        <StatCard icon={Briefcase} label="Tersedia" value="5" tone="bg-blue-50 text-blue-600" />
+        <StatCard icon={Star} label="Rating Rata-rata" value={averageRating} tone="bg-orange-50 text-orange-600" />
+        <StatCard icon={Briefcase} label="Tersedia" value={`${sourceCandidates.filter((candidate) => candidate.status === "Tersedia").length}`} tone="bg-blue-50 text-blue-600" />
       </div>
 
       <section className="mt-9 rounded-2xl border border-slate-200 bg-white p-6">
@@ -118,14 +153,17 @@ export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBook
       </section>
 
       <div className="mt-8 grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3">
-        {visible.length === 0 ? (
+        {isLoading && (
           <div className="col-span-full rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
-            <p className="text-lg font-black text-slate-800">Kandidat tidak ditemukan.</p>
-            <p className="mt-2 text-sm text-slate-500">Coba ubah kata kunci, status, atau filter tersimpan.</p>
+            <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-600" />
+            <p className="mt-3 text-sm font-bold text-slate-500">Memuat talent pool dari GET /api/recruiter/talent-pool...</p>
           </div>
-        ) : visible.map((candidate) => (
+        )}
+        {!isLoading && sourceCandidates.length === 0 && <EmptyState title="Talent pool kosong." description="API berhasil dimuat, tetapi belum ada kandidat yang tersedia untuk recruiter ini." />}
+        {!isLoading && sourceCandidates.length > 0 && visible.length === 0 && <EmptyState title="Kandidat tidak ditemukan." description="Coba ubah kata kunci, status, atau filter tersimpan." />}
+        {!isLoading && visible.map((candidate) => (
           <article key={candidate.id} className="relative rounded-2xl border border-slate-200 bg-white p-7">
-            <button onClick={() => onToggleBookmarkCandidate(candidate.id)} className={`absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-lg ${candidate.saved ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-400"}`}>
+            <button disabled onClick={() => onToggleBookmarkCandidate(candidate.id)} className={`absolute right-5 top-5 flex h-9 w-9 cursor-not-allowed items-center justify-center rounded-lg ${candidate.saved ? "bg-amber-100 text-amber-600" : "bg-slate-100 text-slate-400"}`} title="Bookmark permanen belum tersedia">
               <Bookmark className={`h-5 w-5 ${candidate.saved ? "fill-amber-500" : ""}`} />
             </button>
             <div className="text-center">
@@ -147,13 +185,13 @@ export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBook
             <div className="mt-4">
               <p className="text-sm text-slate-500">Skills</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {candidate.skills.map((skill) => <span key={skill} className="rounded bg-emerald-50 px-2 py-1 text-sm font-semibold text-emerald-700">{skill}</span>)}
+                {candidate.skills.length === 0 ? <span className="text-sm font-semibold text-slate-400">Belum ada skill.</span> : candidate.skills.map((skill) => <span key={skill} className="rounded bg-emerald-50 px-2 py-1 text-sm font-semibold text-emerald-700">{skill}</span>)}
               </div>
             </div>
             <div className="mt-5 flex gap-3">
-              <button className="h-11 flex-1 rounded-lg bg-emerald-600 font-semibold text-white hover:bg-emerald-700">Lihat Profil</button>
-              <button className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"><Mail className="h-4 w-4" /></button>
-              <button className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"><Download className="h-4 w-4" /></button>
+              <button onClick={() => setSelectedCandidate(candidate)} className="h-11 flex-1 rounded-lg bg-emerald-600 font-semibold text-white hover:bg-emerald-700">Lihat Profil</button>
+              <button disabled className="flex h-11 w-11 cursor-not-allowed items-center justify-center rounded-lg border border-slate-200 text-slate-400" title="Email kandidat belum tersedia"><Mail className="h-4 w-4" /></button>
+              <button disabled className="flex h-11 w-11 cursor-not-allowed items-center justify-center rounded-lg border border-slate-200 text-slate-400" title="Download CV belum tersedia"><Download className="h-4 w-4" /></button>
             </div>
           </article>
         ))}
@@ -162,8 +200,43 @@ export const TalentPool: React.FC<TalentPoolProps> = ({ candidates, onToggleBook
       <section className="mt-10 rounded-2xl bg-emerald-700 p-8 text-white">
         <h2 className="text-3xl font-black">Akses Lebih Banyak Kandidat dengan Premium</h2>
         <p className="mt-3 max-w-4xl text-lg text-emerald-50">Upgrade ke paket Premium untuk mendapatkan akses unlimited ke database talent pool dan fitur filtering lanjutan.</p>
-        <button className="mt-7 h-12 rounded-lg bg-white px-8 font-semibold text-emerald-700">Upgrade Sekarang</button>
+        <button disabled className="mt-7 h-12 cursor-not-allowed rounded-lg bg-white/70 px-8 font-semibold text-emerald-900">Premium belum tersedia</button>
       </section>
+
+      {selectedCandidate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+          <section className="w-full max-w-2xl rounded-2xl bg-white p-7 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex gap-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-xl font-black text-emerald-700">{selectedCandidate.initials}</div>
+                <div>
+                  <h2 className="text-2xl font-black text-slate-950">{selectedCandidate.name}</h2>
+                  <p className="mt-1 font-semibold text-slate-600">{selectedCandidate.title}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-500">{selectedCandidate.email || "Email belum tersedia"}</p>
+                </div>
+              </div>
+              <button onClick={() => setSelectedCandidate(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-50 hover:text-slate-700"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="mt-6 grid gap-4 md:grid-cols-3">
+              <StatCard icon={Star} label="Rating" value={`${selectedCandidate.rating}`} tone="bg-orange-50 text-orange-600" />
+              <StatCard icon={Briefcase} label="Pengalaman" value={selectedCandidate.exp.replace(" pengalaman", "")} tone="bg-blue-50 text-blue-600" />
+              <StatCard icon={Users} label="Status" value={selectedCandidate.status} tone="bg-emerald-50 text-emerald-600" />
+            </div>
+            <div className="mt-6 space-y-4">
+              <div>
+                <p className="text-sm font-black text-slate-500">Bio</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">{selectedCandidate.bio || "Bio kandidat belum tersedia."}</p>
+              </div>
+              <div>
+                <p className="text-sm font-black text-slate-500">Skill</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selectedCandidate.skills.length === 0 ? <span className="text-sm font-semibold text-slate-400">Belum ada skill.</span> : selectedCandidate.skills.map((skill) => <span key={skill} className="rounded bg-emerald-50 px-2 py-1 text-sm font-semibold text-emerald-700">{skill}</span>)}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 };

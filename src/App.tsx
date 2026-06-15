@@ -86,6 +86,13 @@ type SellerDashboardErrors = {
   earnings?: string;
 };
 
+type RecruiterDashboardErrors = {
+  jobs?: string;
+  applicants?: string;
+  talentPool?: string;
+  stats?: string;
+};
+
 const readSavedJobs = () => {
   if (typeof window === "undefined") return ["job-1", "job-3"];
   try {
@@ -100,9 +107,9 @@ const readSavedJobs = () => {
 export default function App() {
   // Global React persistent simulation db states
   const [jobs, setJobs] = useState<Job[]>(INITIAL_JOBS);
-  const [recruiterJobs, setRecruiterJobs] = useState<Job[]>(INITIAL_JOBS);
+  const [recruiterJobs, setRecruiterJobs] = useState<Job[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>(INITIAL_CANDIDATES);
-  const [recruiterCandidates, setRecruiterCandidates] = useState<Candidate[]>(INITIAL_CANDIDATES);
+  const [recruiterCandidates, setRecruiterCandidates] = useState<Candidate[]>([]);
   const [services, setServices] = useState<CareerService[]>(INITIAL_SERVICES);
   const [sellerServices, setSellerServices] = useState<CareerService[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
@@ -120,8 +127,10 @@ export default function App() {
   const [sellerScheduleLoading, setSellerScheduleLoading] = useState(false);
   const [sellerScheduleError, setSellerScheduleError] = useState<string | null>(null);
   const [applicants, setApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
-  const [recruiterApplicants, setRecruiterApplicants] = useState<Applicant[]>(INITIAL_APPLICANTS);
+  const [recruiterApplicants, setRecruiterApplicants] = useState<Applicant[]>([]);
   const [recruiterStats, setRecruiterStats] = useState<RecruiterStatsSummary | null>(null);
+  const [recruiterDashboardLoading, setRecruiterDashboardLoading] = useState(false);
+  const [recruiterDashboardErrors, setRecruiterDashboardErrors] = useState<RecruiterDashboardErrors>({});
 
   // User details & Navigation
   const [currentRole, setCurrentRole] = useState<UserRole>("seeker");
@@ -297,17 +306,50 @@ export default function App() {
     loadSellerSchedule().catch(() => undefined);
   }, [currentUser]);
 
-  useEffect(() => {
+  const loadRecruiterDashboard = async () => {
     if (!currentUser || currentUser.role !== "recruiter") return;
 
-    Promise.all([fetchRecruiterJobs(), fetchRecruiterApplicants(), fetchRecruiterTalentPool(), fetchRecruiterStats()])
-      .then(([jobResult, applicantResult, talentResult, statsResult]) => {
-        setRecruiterJobs(jobResult.jobs);
-        setRecruiterApplicants(applicantResult.applicants);
-        setRecruiterCandidates(talentResult.candidates);
-        setRecruiterStats(statsResult.stats);
-      })
-      .catch(() => triggerToast("Dashboard recruiter masih memakai data cadangan karena API recruiter belum siap.", "info"));
+    setRecruiterDashboardLoading(true);
+    setRecruiterDashboardErrors({});
+
+    const [jobsResult, applicantsResult, talentResult, statsResult] = await Promise.allSettled([
+      fetchRecruiterJobs(),
+      fetchRecruiterApplicants(),
+      fetchRecruiterTalentPool(),
+      fetchRecruiterStats()
+    ]);
+    const nextErrors: RecruiterDashboardErrors = {};
+
+    if (jobsResult.status === "fulfilled") {
+      setRecruiterJobs(jobsResult.value.jobs);
+    } else {
+      nextErrors.jobs = jobsResult.reason instanceof Error ? jobsResult.reason.message : "GET /api/recruiter/jobs gagal.";
+    }
+
+    if (applicantsResult.status === "fulfilled") {
+      setRecruiterApplicants(applicantsResult.value.applicants);
+    } else {
+      nextErrors.applicants = applicantsResult.reason instanceof Error ? applicantsResult.reason.message : "GET /api/recruiter/applicants gagal.";
+    }
+
+    if (talentResult.status === "fulfilled") {
+      setRecruiterCandidates(talentResult.value.candidates);
+    } else {
+      nextErrors.talentPool = talentResult.reason instanceof Error ? talentResult.reason.message : "GET /api/recruiter/talent-pool gagal.";
+    }
+
+    if (statsResult.status === "fulfilled") {
+      setRecruiterStats(statsResult.value.stats);
+    } else {
+      nextErrors.stats = statsResult.reason instanceof Error ? statsResult.reason.message : "GET /api/recruiter/stats gagal.";
+    }
+
+    setRecruiterDashboardErrors(nextErrors);
+    setRecruiterDashboardLoading(false);
+  };
+
+  useEffect(() => {
+    loadRecruiterDashboard();
   }, [currentUser]);
 
   // Auth handler
@@ -590,8 +632,8 @@ export default function App() {
       refreshRecruiterStats();
       triggerToast(`Lowongan '${job.title}' resmi beredar aktif di portal pencarian kerja!`, "success");
     } catch (error) {
-      setRecruiterJobs([newJob, ...recruiterJobs]);
       triggerToast(error instanceof Error ? error.message : "Gagal menyimpan lowongan ke database.", "error");
+      throw error;
     }
   };
 
@@ -603,8 +645,8 @@ export default function App() {
       refreshRecruiterStats();
       triggerToast("Lowongan berhasil diperbarui.", "success");
     } catch (error) {
-      setRecruiterJobs(recruiterJobs.map((j) => j.id === updatedJob.id ? updatedJob : j));
       triggerToast(error instanceof Error ? error.message : "Gagal memperbarui lowongan di database.", "error");
+      throw error;
     }
   };
 
@@ -622,8 +664,8 @@ export default function App() {
       refreshRecruiterStats();
       triggerToast("Postingan iklan loker ditutup.", "info");
     } catch (error) {
-      setRecruiterJobs(recruiterJobs.map((j) => j.id === jobId ? { ...j, status: "ditutup" } : j));
       triggerToast(error instanceof Error ? error.message : "Gagal menutup lowongan di database.", "error");
+      throw error;
     }
   };
 
@@ -638,17 +680,14 @@ export default function App() {
       refreshRecruiterStats();
       triggerToast(`Status pelamar dipindahkan ke: ${status}`, "success");
     } catch (error) {
-      setRecruiterApplicants(recruiterApplicants.map((a) => a.id === appId ? { ...a, status } : a));
-      triggerToast(error instanceof Error ? error.message : `Status pelamar dipindahkan lokal ke: ${status}`, "info");
+      triggerToast(error instanceof Error ? error.message : `Gagal memperbarui status pelamar ke: ${status}`, "error");
+      throw error;
     }
   };
 
   // Recruiter bookmark talents
   const handleToggleBookmarkCandidate = (id: string) => {
-    setRecruiterCandidates(
-      recruiterCandidates.map((c) => c.id === id ? { ...c, savedByRecruiter: !c.savedByRecruiter } : c)
-    );
-    triggerToast("Bookmark kandidat diperbarui untuk sesi ini.", "success");
+    triggerToast(`Bookmark kandidat ${id} belum tersedia pada tahap stabilisasi recruiter.`, "info");
   };
 
   const handleUpdateUserName = (newName: string) => {
@@ -877,6 +916,9 @@ export default function App() {
                 jobs={recruiterJobs}
                 applicants={recruiterApplicants}
                 stats={recruiterStats}
+                isLoading={recruiterDashboardLoading}
+                errors={recruiterDashboardErrors}
+                onRetry={loadRecruiterDashboard}
                 setActiveTab={setActiveTab}
               />
             )}
@@ -884,6 +926,9 @@ export default function App() {
             {activeTab === "recruiter-jobs" && (
               <JobManager
                 jobs={recruiterJobs}
+                isLoading={recruiterDashboardLoading}
+                error={recruiterDashboardErrors.jobs}
+                onRetry={loadRecruiterDashboard}
                 onUpdateJob={handleUpdateJob}
                 onUpdateJobStatus={handleUpdateJobStatus}
                 onDeleteJob={handleDeleteJob}
@@ -894,6 +939,7 @@ export default function App() {
             {activeTab === "recruiter-post-job" && (
               <JobPoster
                 onAddJob={handleAddJob}
+                currentUser={currentUser}
                 setActiveTab={setActiveTab}
               />
             )}
@@ -901,6 +947,9 @@ export default function App() {
             {activeTab === "recruiter-applicants" && (
               <ApplicantTracker
                 applicants={recruiterApplicants}
+                isLoading={recruiterDashboardLoading}
+                error={recruiterDashboardErrors.applicants}
+                onRetry={loadRecruiterDashboard}
                 onUpdateApplicantStatus={handleUpdateApplicantStatus}
               />
             )}
@@ -908,6 +957,9 @@ export default function App() {
             {activeTab === "recruiter-talent" && (
               <TalentPool
                 candidates={recruiterCandidates}
+                isLoading={recruiterDashboardLoading}
+                error={recruiterDashboardErrors.talentPool}
+                onRetry={loadRecruiterDashboard}
                 onToggleBookmarkCandidate={handleToggleBookmarkCandidate}
                 savedCandidatesOnly={savedCandidatesOnly}
                 setSavedCandidatesOnly={setSavedCandidatesOnly}
