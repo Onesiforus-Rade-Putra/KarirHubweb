@@ -1,27 +1,23 @@
 import React from "react";
 import { Applicant, Job } from "../../types";
 import { RecruiterStatsSummary } from "../../lib/karirHubApi";
-import { Briefcase, CheckCircle2, FileText, Plus, TrendingUp, UserPlus, Users } from "lucide-react";
+import { AlertCircle, Briefcase, CheckCircle2, FileText, Loader2, Plus, RotateCcw, TrendingUp, UserPlus, Users } from "lucide-react";
 
 interface RecruiterDashboardProps {
   currentUser: any;
   jobs: Job[];
   applicants: Applicant[];
   stats: RecruiterStatsSummary | null;
+  isLoading: boolean;
+  errors: {
+    jobs?: string;
+    applicants?: string;
+    talentPool?: string;
+    stats?: string;
+  };
+  onRetry: () => void;
   setActiveTab: (tab: string) => void;
 }
-
-const activeJobs = [
-  { title: "Senior Frontend Developer", category: "Engineering", applicants: 45, interviews: 12, accepted: 2, posted: "Diposting 2 minggu yang lalu" },
-  { title: "Product Manager", category: "Product", applicants: 78, interviews: 8, accepted: 0, posted: "Diposting 1 minggu yang lalu" },
-  { title: "UI/UX Designer", category: "Design", applicants: 92, interviews: 15, accepted: 1, posted: "Diposting 3 minggu yang lalu" }
-];
-
-const recentApplicants = [
-  { initials: "BS", name: "Budi Santoso", role: "Senior Frontend Developer", exp: "5 tahun", time: "2 jam yang lalu", status: "Menunggu Review", tone: "bg-amber-100 text-amber-700" },
-  { initials: "SA", name: "Siti Aminah", role: "Product Manager", exp: "7 tahun", time: "5 jam yang lalu", status: "Interview Dijadwalkan", tone: "bg-emerald-100 text-emerald-700" },
-  { initials: "AR", name: "Ahmad Rizki", role: "UI/UX Designer", exp: "3 tahun", time: "1 hari yang lalu", status: "Shortlisted", tone: "bg-purple-100 text-purple-700" }
-];
 
 const StatCard = ({ icon: Icon, label, value, tone }: { icon: React.ElementType; label: string; value: string; tone: string }) => (
   <div className="flex min-h-[108px] items-center gap-5 rounded-2xl border border-slate-200 bg-white px-6 py-5">
@@ -50,20 +46,53 @@ const initials = (name: string) =>
     .slice(0, 2)
     .toUpperCase() || "KH";
 
-export const RecruiterDashboard: React.FC<RecruiterDashboardProps> = ({ jobs, applicants, stats, setActiveTab }) => {
-  const visibleJobs = jobs.length
-    ? jobs.filter((job) => job.status === "aktif").slice(0, 3).map((job) => ({
+const LoadingState = ({ label }: { label: string }) => (
+  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+    <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-600" />
+    <p className="mt-3 text-sm font-bold text-slate-500">{label}</p>
+  </div>
+);
+
+const EmptyState = ({ title, description }: { title: string; description: string }) => (
+  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+    <p className="text-base font-black text-slate-800">{title}</p>
+    <p className="mt-2 text-sm font-semibold text-slate-500">{description}</p>
+  </div>
+);
+
+const ErrorState = ({ errors, onRetry }: { errors: RecruiterDashboardProps["errors"]; onRetry: () => void }) => {
+  const entries = Object.entries(errors).filter(([, value]) => Boolean(value));
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="flex items-center gap-2 font-black"><AlertCircle className="h-5 w-5" />Gagal memuat sebagian data recruiter.</p>
+          <div className="mt-3 space-y-1 text-sm font-semibold">
+            {entries.map(([key, value]) => <p key={key}>{value}</p>)}
+          </div>
+        </div>
+        <button onClick={onRetry} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-black text-white hover:bg-red-700">
+          <RotateCcw className="h-4 w-4" />
+          Coba Lagi
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export const RecruiterDashboard: React.FC<RecruiterDashboardProps> = ({ jobs, applicants, stats, isLoading, errors, onRetry, setActiveTab }) => {
+  const activeJobRows = jobs.filter((job) => job.status === "aktif").slice(0, 3).map((job) => ({
         title: job.title,
         category: job.category,
         applicants: job.applicantsCount,
         interviews: applicants.filter((app) => app.jobId === job.id && app.status === "Interview").length,
         accepted: applicants.filter((app) => app.jobId === job.id && app.status === "Diterima").length,
         posted: `Diposting ${job.postedDate}`
-      }))
-    : activeJobs;
+      }));
 
-  const visibleApplicants = applicants.length
-    ? applicants.slice(0, 3).map((app) => ({
+  const recentApplicantRows = applicants.slice(0, 3).map((app) => ({
         initials: initials(app.candidateName),
         name: app.candidateName,
         role: app.jobTitle || app.candidateTitle,
@@ -71,8 +100,14 @@ export const RecruiterDashboard: React.FC<RecruiterDashboardProps> = ({ jobs, ap
         time: app.appliedDate,
         status: app.status,
         tone: app.status === "Interview" ? "bg-emerald-100 text-emerald-700" : app.status === "Shortlisted" ? "bg-purple-100 text-purple-700" : "bg-amber-100 text-amber-700"
-      }))
-    : recentApplicants;
+      }));
+  const pipeline = [
+    { label: "Aplikasi Baru", value: applicants.filter((app) => app.status === "Baru").length, color: "bg-blue-600" },
+    { label: "Dalam Review", value: applicants.filter((app) => app.status === "Shortlisted").length, color: "bg-amber-600" },
+    { label: "Interview", value: stats?.applicants_interview ?? applicants.filter((app) => app.status === "Interview").length, color: "bg-purple-600" },
+    { label: "Diterima", value: applicants.filter((app) => app.status === "Diterima").length, color: "bg-emerald-600" }
+  ];
+  const pipelineTotal = Math.max(1, applicants.length);
 
   return (
     <div className="mx-auto max-w-[1536px] px-8 py-12 text-left">
@@ -80,6 +115,7 @@ export const RecruiterDashboard: React.FC<RecruiterDashboardProps> = ({ jobs, ap
         <h1 className="text-[40px] font-black leading-tight tracking-normal text-slate-950">Dashboard Recruiter</h1>
         <p className="mt-2 text-xl text-slate-600">Kelola lowongan dan kandidat Anda</p>
       </div>
+      <ErrorState errors={errors} onRetry={onRetry} />
 
       <div className="mt-10 grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-4">
         <StatCard icon={Briefcase} label="Lowongan Aktif" value={`${stats?.active_jobs ?? jobs.filter((job) => job.status === "aktif").length}`} tone="bg-blue-100 text-blue-600" />
@@ -100,7 +136,9 @@ export const RecruiterDashboard: React.FC<RecruiterDashboardProps> = ({ jobs, ap
             </div>
 
             <div className="mt-7 space-y-4">
-              {visibleJobs.map((job) => (
+              {isLoading && <LoadingState label="Memuat lowongan dari GET /api/recruiter/jobs..." />}
+              {!isLoading && activeJobRows.length === 0 && <EmptyState title="Belum ada lowongan aktif." description="Lowongan yang berhasil dimuat dari API akan muncul di sini." />}
+              {!isLoading && activeJobRows.map((job) => (
                 <article key={job.title} className="rounded-xl border border-slate-200 p-5">
                   <h3 className="text-xl font-black text-slate-950">{job.title}</h3>
                   <p className="mt-2 text-base text-slate-600">{job.category}</p>
@@ -137,7 +175,9 @@ export const RecruiterDashboard: React.FC<RecruiterDashboardProps> = ({ jobs, ap
               </button>
             </div>
             <div className="mt-7 space-y-4">
-              {visibleApplicants.map((app) => (
+              {isLoading && <LoadingState label="Memuat pelamar dari GET /api/recruiter/applicants..." />}
+              {!isLoading && recentApplicantRows.length === 0 && <EmptyState title="Belum ada pelamar." description="Pelamar terbaru dari API akan muncul setelah ada lamaran masuk." />}
+              {!isLoading && recentApplicantRows.map((app) => (
                 <article key={app.name} className="rounded-xl border border-slate-200 p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex gap-4">
@@ -152,8 +192,8 @@ export const RecruiterDashboard: React.FC<RecruiterDashboardProps> = ({ jobs, ap
                     <span className={`rounded-full px-3 py-1 text-sm font-medium ${app.tone}`}>{app.status}</span>
                   </div>
                   <div className="mt-4 flex gap-3">
-                    <button className="h-10 flex-1 rounded-lg bg-emerald-600 font-semibold text-white hover:bg-emerald-700">Lihat Profil</button>
-                    <button className="h-10 rounded-lg border border-slate-200 px-5 font-semibold text-slate-700 hover:bg-slate-50">Jadwalkan Interview</button>
+                    <button disabled className="h-10 flex-1 cursor-not-allowed rounded-lg bg-slate-200 font-semibold text-slate-500" title="Profil kandidat belum tersedia dari data pelamar">Profil belum tersedia</button>
+                    <button disabled className="h-10 cursor-not-allowed rounded-lg border border-slate-200 px-5 font-semibold text-slate-400">Interview belum tersedia</button>
                   </div>
                 </article>
               ))}
@@ -164,19 +204,14 @@ export const RecruiterDashboard: React.FC<RecruiterDashboardProps> = ({ jobs, ap
         <aside className="space-y-7">
           <section className="rounded-2xl border border-slate-200 bg-white p-7">
             <h2 className="text-xl font-black text-slate-950">Pipeline Rekrutmen</h2>
-            {[
-              ["Aplikasi Baru", "28", "82%", "bg-blue-600"],
-              ["Dalam Review", "45", "65%", "bg-amber-600"],
-              ["Interview", "12", "35%", "bg-purple-600"],
-              ["Offer Stage", "5", "15%", "bg-emerald-600"]
-            ].map(([label, value, width, color]) => (
+            {pipeline.map(({ label, value, color }) => (
               <div key={label} className="mt-6">
                 <div className="flex justify-between text-base">
                   <span className="text-slate-600">{label}</span>
                   <span className="font-black text-slate-950">{value}</span>
                 </div>
                 <div className="mt-2 h-2 rounded-full bg-slate-200">
-                  <div className={`h-full rounded-full ${color}`} style={{ width }} />
+                  <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.round((value / pipelineTotal) * 100)}%` }} />
                 </div>
               </div>
             ))}
@@ -185,12 +220,12 @@ export const RecruiterDashboard: React.FC<RecruiterDashboardProps> = ({ jobs, ap
           <section className="rounded-2xl border border-slate-200 bg-white p-7">
             <h2 className="text-xl font-black text-slate-950">Aksi Cepat</h2>
             {[
-              [Briefcase, "Buat Lowongan Baru", "recruiter-post-job", "bg-emerald-100 text-emerald-600"],
-              [FileText, "Template Job Desc", "recruiter-post-job", "bg-blue-100 text-blue-600"],
-              [Users, "Database Kandidat", "recruiter-talent", "bg-purple-100 text-purple-600"],
-              [TrendingUp, "Laporan Rekrutmen", "recruiter-upgrade", "bg-orange-100 text-orange-600"]
-            ].map(([Icon, label, tab, tone]) => (
-              <button key={label as string} onClick={() => setActiveTab(tab as string)} className="mt-4 flex h-16 w-full items-center gap-4 rounded-lg border border-slate-200 px-4 text-left font-semibold text-slate-800 hover:bg-slate-50">
+              [Briefcase, "Buat Lowongan Baru", "recruiter-post-job", "bg-emerald-100 text-emerald-600", false],
+              [FileText, "Template Job Desc", "recruiter-post-job", "bg-blue-100 text-blue-600", false],
+              [Users, "Database Kandidat", "recruiter-talent", "bg-purple-100 text-purple-600", false],
+              [TrendingUp, "Laporan belum tersedia", "recruiter-upgrade", "bg-orange-100 text-orange-600", true]
+            ].map(([Icon, label, tab, tone, disabled]) => (
+              <button key={label as string} disabled={disabled as boolean} onClick={() => setActiveTab(tab as string)} className={`mt-4 flex h-16 w-full items-center gap-4 rounded-lg border border-slate-200 px-4 text-left font-semibold ${disabled ? "cursor-not-allowed text-slate-400" : "text-slate-800 hover:bg-slate-50"}`}>
                 {React.createElement(Icon as React.ElementType, { className: `h-10 w-10 rounded-lg p-2.5 ${tone}` })}
                 {label as string}
               </button>

@@ -6,8 +6,8 @@ type Location = RecruiterProfilePayload["locations"][number];
 type TeamMember = RecruiterProfilePayload["teamMembers"][number];
 
 const emptyRecruiterProfile: RecruiterProfilePayload = {
-  company: { logoUrl: "", companyName: "PT Tech Indonesia", industry: "", companySize: "", companyEmail: "", phone: "", website: "", about: "" },
-  benefits: ["BPJS Kesehatan & Ketenagakerjaan", "Asuransi Kesehatan Swasta", "Tunjangan Transportasi", "Flexible Working Hours", "Work From Home", "Annual Bonus"],
+  company: { logoUrl: "", companyName: "", industry: "", companySize: "", companyEmail: "", phone: "", website: "", about: "" },
+  benefits: [],
   locations: [],
   teamMembers: []
 };
@@ -25,14 +25,14 @@ export const RecruiterProfile: React.FC<{ currentUser: any; toast: (msg: string,
   const [locationForm, setLocationForm] = useState<Location | null>(null);
   const [teamForm, setTeamForm] = useState<TeamMember | null>(null);
 
-  const initials = useMemo(() => (profile.company.companyName || currentUser?.company || "PT").split(" ").map((part: string) => part[0]).join("").slice(0, 2).toUpperCase(), [profile.company.companyName, currentUser?.company]);
+  const initials = useMemo(() => (profile.company.companyName || currentUser?.company || currentUser?.name || "KH").split(" ").map((part: string) => part[0]).join("").slice(0, 2).toUpperCase(), [profile.company.companyName, currentUser?.company, currentUser?.name]);
 
   const loadProfile = async () => {
     setLoading(true);
     setMessage(null);
     try {
       const { profile: loaded } = await fetchRecruiterProfile();
-      const next = { ...emptyRecruiterProfile, ...loaded, company: { ...emptyRecruiterProfile.company, ...loaded.company, companyName: loaded.company.companyName || currentUser?.company || "PT Tech Indonesia" } };
+      const next = { ...emptyRecruiterProfile, ...loaded, company: { ...emptyRecruiterProfile.company, ...loaded.company, companyName: loaded.company.companyName || currentUser?.company || "" } };
       setProfile(next);
       setInitialProfile(next);
     } catch (error) {

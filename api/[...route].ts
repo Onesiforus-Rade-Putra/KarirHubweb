@@ -100,10 +100,44 @@ function logRouteSelection(req: any, route: string, handlerName: string) {
   console.log("[api route selected]", {
     method: req.method,
     url: req.url,
+    queryRoute: req.query?.route,
     normalizedPathname: normalizeApiPath(req),
     route,
     handlerName,
   });
+}
+
+function handlerNameForRoute(route: string, method: string) {
+  if (route === "auth/register" && method === "POST") return "handleRegister";
+  if (route === "auth/login" && method === "POST") return "handleLogin";
+  if (route === "auth/me" && method === "GET") return "handleMe";
+  if (route === "profile") return "handleProfile";
+  if (route === "profile/cv") return "handleProfileCv";
+  if (route === "settings") return "handleSettings";
+  if (route === "seller/services") return "handleSellerServices";
+  if (route === "seller/orders") return "handleSellerOrders";
+  if (route === "seller/sessions") return "handleSellerSessions";
+  if (/^seller\/sessions\/[^/]+\/reschedule$/.test(route)) return "handleSellerSessionReschedule";
+  if (/^seller\/sessions\/[^/]+\/meeting-link$/.test(route)) return "handleSellerSessionMeetingLink";
+  if (route === "seller/availability") return "handleSellerAvailability";
+  if (route === "seller/earnings") return "handleSellerEarnings";
+  if (route === "seller/earnings/export") return "handleSellerEarningsExport";
+  if (route === "seller/payout-accounts") return "handleSellerPayoutAccounts";
+  if (route === "seller/withdrawals") return "handleSellerWithdrawals";
+  if (route === "seller/profile") return "handleSellerProfile";
+  if (route === "recruiter/jobs") return "handleRecruiterJobs";
+  if (route === "recruiter/applicants") return "handleRecruiterApplicants";
+  if (route === "recruiter/talent-pool") return "handleRecruiterTalent";
+  if (route === "recruiter/stats") return "handleRecruiterStats";
+  if (route === "recruiter/profile") return "handleRecruiterProfile";
+  if (route === "services" && method === "GET") return "handlePublicServices";
+  if (route === "jobs" && method === "GET") return "handlePublicJobs";
+  if (route === "orders") return "handleOrders";
+  if (route === "transactions") return "handleTransactions";
+  if (route === "applications") return "handleApplications";
+  if (route === "ai-photo") return "handleAIPhoto";
+  if (route === "resume-builder" || route.startsWith("resume-builder/")) return "handleResumeBuilder";
+  return "unmatched";
 }
 
 function publicUser(profile: any, email: string) {
@@ -2281,11 +2315,14 @@ export default async function handler(req: any, res: any) {
   const normalizedPathname = normalizeApiPath(req);
   const route = cleanApiRoute(normalizedPathname);
   const method = req.method;
+  const handlerName = handlerNameForRoute(route, method);
   console.log("[api route normalized]", {
     method,
     url: req.url,
+    queryRoute: req.query?.route,
     normalizedPathname,
     route,
+    handlerName,
   });
 
   try {
@@ -2345,17 +2382,32 @@ export default async function handler(req: any, res: any) {
       logRouteSelection(req, route, "handleSellerProfile");
       return handleSellerProfile(req, res);
     }
+    if (route === "recruiter/jobs") {
+      logRouteSelection(req, route, "handleRecruiterJobs");
+      return handleRecruiterJobs(req, res);
+    }
+    if (route === "recruiter/applicants") {
+      logRouteSelection(req, route, "handleRecruiterApplicants");
+      return handleRecruiterApplicants(req, res);
+    }
+    if (route === "recruiter/talent-pool") {
+      logRouteSelection(req, route, "handleRecruiterTalent");
+      return handleRecruiterTalent(req, res);
+    }
+    if (route === "recruiter/stats") {
+      logRouteSelection(req, route, "handleRecruiterStats");
+      return handleRecruiterStats(req, res);
+    }
+    if (route === "recruiter/profile") {
+      logRouteSelection(req, route, "handleRecruiterProfile");
+      return handleRecruiterProfile(req, res);
+    }
     if (route === "services" && method === "GET") return handlePublicServices(res);
     if (route === "jobs" && method === "GET") return handlePublicJobs(res);
     if (route === "orders") return handleOrders(req, res);
     if (route === "transactions") return handleTransactions(req, res);
     if (route === "applications") return handleApplications(req, res);
     if (route === "ai-photo") return handleAIPhoto(req, res);
-    if (route === "recruiter/jobs") return handleRecruiterJobs(req, res);
-    if (route === "recruiter/applicants") return handleRecruiterApplicants(req, res);
-    if (route === "recruiter/talent-pool") return handleRecruiterTalent(req, res);
-    if (route === "recruiter/stats") return handleRecruiterStats(req, res);
-    if (route === "recruiter/profile") return handleRecruiterProfile(req, res);
     if (route === "resume-builder" || route.startsWith("resume-builder/")) return handleResumeBuilder(route, req, res);
 
     if (route.includes("seller") || String(req.url || "").includes("seller")) {

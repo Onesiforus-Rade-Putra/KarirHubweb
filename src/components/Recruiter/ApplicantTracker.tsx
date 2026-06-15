@@ -1,27 +1,14 @@
 import React, { useState } from "react";
 import { Applicant } from "../../types";
-import { Calendar, CheckCircle2, Clock, Download, Mail, Search, Star, XCircle } from "lucide-react";
+import { AlertCircle, Calendar, CheckCircle2, Clock, Download, Loader2, Mail, RotateCcw, Search, Star, XCircle } from "lucide-react";
 
 interface TrackerProps {
   applicants: Applicant[];
+  isLoading: boolean;
+  error?: string;
+  onRetry: () => void;
   onUpdateApplicantStatus: (appId: string, status: Applicant["status"]) => void | Promise<void>;
 }
-
-const fallbackApplicants: Applicant[] = [
-  {
-    id: "app-ui-1",
-    jobId: "job-ui-1",
-    jobTitle: "Senior Frontend Developer",
-    candidateName: "Budi Santoso",
-    candidateTitle: "Frontend Developer",
-    candidateEmail: "budi.santoso@email.com",
-    candidateRating: 4.5,
-    candidateExperience: 5,
-    status: "Baru",
-    appliedDate: "Baru saja",
-    resumeSummary: "React, TypeScript, Next.js"
-  }
-];
 
 const initials = (name: string) =>
   name
@@ -51,12 +38,30 @@ const StatCard = ({ icon: Icon, label, value, tone }: { icon: React.ElementType;
   </div>
 );
 
-export const ApplicantTracker: React.FC<TrackerProps> = ({ applicants, onUpdateApplicantStatus }) => {
+const ErrorState = ({ message, onRetry }: { message: string; onRetry: () => void }) => (
+  <div className="mt-7 rounded-xl border border-red-200 bg-red-50 p-5 text-red-700">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="flex items-center gap-2 font-black"><AlertCircle className="h-5 w-5" />{message}</p>
+      <button onClick={onRetry} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-black text-white hover:bg-red-700">
+        <RotateCcw className="h-4 w-4" />
+        Coba Lagi
+      </button>
+    </div>
+  </div>
+);
+
+const EmptyState = ({ title, description }: { title: string; description: string }) => (
+  <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+    <p className="text-lg font-black text-slate-800">{title}</p>
+    <p className="mt-2 text-sm font-semibold text-slate-500">{description}</p>
+  </div>
+);
+
+export const ApplicantTracker: React.FC<TrackerProps> = ({ applicants, isLoading, error, onRetry, onUpdateApplicantStatus }) => {
   const [activeTab, setActiveTab] = useState("Semua");
   const [searchTerm, setSearchTerm] = useState("");
-  const sourceApplicants = applicants.length ? applicants : fallbackApplicants;
 
-  const visible = sourceApplicants.filter((app) => {
+  const visible = applicants.filter((app) => {
     const matchTab = activeTab === "Semua" || app.status === activeTab;
     const term = searchTerm.toLowerCase();
     return matchTab && (app.candidateName.toLowerCase().includes(term) || app.jobTitle.toLowerCase().includes(term) || app.candidateTitle.toLowerCase().includes(term));
@@ -68,13 +73,14 @@ export const ApplicantTracker: React.FC<TrackerProps> = ({ applicants, onUpdateA
         <h1 className="text-[40px] font-black leading-tight tracking-normal text-slate-950">Daftar Pelamar</h1>
         <p className="mt-2 text-xl text-slate-600">Review dan kelola kandidat yang melamar</p>
       </div>
+      {error && <ErrorState message={error} onRetry={onRetry} />}
 
       <div className="mt-10 grid grid-cols-1 gap-8 md:grid-cols-3 xl:grid-cols-5">
-        <StatCard icon={Clock} label="Baru" value={`${sourceApplicants.filter((app) => app.status === "Baru").length}`} tone="bg-blue-100 text-blue-600" />
-        <StatCard icon={Star} label="Shortlisted" value={`${sourceApplicants.filter((app) => app.status === "Shortlisted").length}`} tone="bg-purple-100 text-purple-600" />
-        <StatCard icon={Calendar} label="Interview" value={`${sourceApplicants.filter((app) => app.status === "Interview").length}`} tone="bg-amber-100 text-amber-600" />
-        <StatCard icon={CheckCircle2} label="Diterima" value={`${sourceApplicants.filter((app) => app.status === "Diterima").length}`} tone="bg-emerald-100 text-emerald-600" />
-        <StatCard icon={XCircle} label="Ditolak" value={`${sourceApplicants.filter((app) => app.status === "Ditolak").length}`} tone="bg-red-100 text-red-600" />
+        <StatCard icon={Clock} label="Baru" value={`${applicants.filter((app) => app.status === "Baru").length}`} tone="bg-blue-100 text-blue-600" />
+        <StatCard icon={Star} label="Shortlisted" value={`${applicants.filter((app) => app.status === "Shortlisted").length}`} tone="bg-purple-100 text-purple-600" />
+        <StatCard icon={Calendar} label="Interview" value={`${applicants.filter((app) => app.status === "Interview").length}`} tone="bg-amber-100 text-amber-600" />
+        <StatCard icon={CheckCircle2} label="Diterima" value={`${applicants.filter((app) => app.status === "Diterima").length}`} tone="bg-emerald-100 text-emerald-600" />
+        <StatCard icon={XCircle} label="Ditolak" value={`${applicants.filter((app) => app.status === "Ditolak").length}`} tone="bg-red-100 text-red-600" />
       </div>
 
       <section className="mt-9 rounded-2xl border border-slate-200 bg-white p-6">
@@ -82,7 +88,7 @@ export const ApplicantTracker: React.FC<TrackerProps> = ({ applicants, onUpdateA
           <div className="flex flex-wrap gap-2">
             {["Semua", "Baru", "Shortlisted", "Interview", "Diterima", "Ditolak"].map((tab) => (
               <button key={tab} onClick={() => setActiveTab(tab)} className={`h-10 rounded-lg px-4 font-semibold ${activeTab === tab ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
-                {tab} ({tab === "Semua" ? sourceApplicants.length : sourceApplicants.filter((app) => app.status === tab).length})
+                {tab} ({tab === "Semua" ? applicants.length : applicants.filter((app) => app.status === tab).length})
               </button>
             ))}
           </div>
@@ -94,7 +100,15 @@ export const ApplicantTracker: React.FC<TrackerProps> = ({ applicants, onUpdateA
       </section>
 
       <div className="mt-7 space-y-5">
-        {visible.map((app) => (
+        {isLoading && (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center">
+            <Loader2 className="mx-auto h-6 w-6 animate-spin text-emerald-600" />
+            <p className="mt-3 text-sm font-bold text-slate-500">Memuat pelamar dari GET /api/recruiter/applicants...</p>
+          </div>
+        )}
+        {!isLoading && applicants.length === 0 && <EmptyState title="Belum ada pelamar." description="API berhasil dimuat, tetapi belum ada kandidat yang melamar lowongan Anda." />}
+        {!isLoading && applicants.length > 0 && visible.length === 0 && <EmptyState title="Pelamar tidak ditemukan." description="Coba ubah status atau kata kunci pencarian." />}
+        {!isLoading && visible.map((app) => (
           <article key={app.id} className="rounded-2xl border border-slate-200 bg-white p-6">
             <div className="flex items-start justify-between gap-5">
               <div className="flex gap-5">
@@ -124,11 +138,11 @@ export const ApplicantTracker: React.FC<TrackerProps> = ({ applicants, onUpdateA
             </div>
 
             <div className="mt-5 flex flex-col gap-3 border-t border-slate-200 pt-5 lg:flex-row">
-              <button className="h-11 flex-1 rounded-lg bg-emerald-600 font-semibold text-white hover:bg-emerald-700">Lihat Profil Lengkap</button>
-              <button className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-700 hover:bg-slate-50"><Download className="h-4 w-4" />Download CV</button>
-              <button className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-700 hover:bg-slate-50"><Mail className="h-4 w-4" />Email</button>
+              <button disabled className="h-11 flex-1 cursor-not-allowed rounded-lg bg-slate-200 font-semibold text-slate-500" title="Profil kandidat belum tersedia dari endpoint pelamar">Profil belum tersedia</button>
+              <button disabled className="inline-flex h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-400"><Download className="h-4 w-4" />CV belum tersedia</button>
+              <button disabled className="inline-flex h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-slate-200 px-6 font-semibold text-slate-400"><Mail className="h-4 w-4" />Email belum tersedia</button>
               {app.status === "Baru" && <button onClick={() => onUpdateApplicantStatus(app.id, "Shortlisted")} className="h-11 rounded-lg bg-purple-600 px-6 font-semibold text-white">Shortlist</button>}
-              {app.status === "Shortlisted" && <button onClick={() => onUpdateApplicantStatus(app.id, "Interview")} className="h-11 rounded-lg bg-amber-600 px-6 font-semibold text-white">Jadwalkan Interview</button>}
+              {app.status === "Shortlisted" && <button disabled className="h-11 cursor-not-allowed rounded-lg bg-slate-200 px-6 font-semibold text-slate-500">Interview belum tersedia</button>}
               {app.status === "Interview" && <button onClick={() => onUpdateApplicantStatus(app.id, "Diterima")} className="h-11 rounded-lg bg-emerald-600 px-6 font-semibold text-white">Terima</button>}
             </div>
           </article>

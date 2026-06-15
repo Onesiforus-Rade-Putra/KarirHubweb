@@ -46,6 +46,7 @@ type NavItem = {
   tab: string;
   icon?: React.ElementType;
   primary?: boolean;
+  disabled?: boolean;
 };
 
 const seekerNav: NavItem[] = [
@@ -82,7 +83,7 @@ const recruiterNav: NavItem[] = [
   { label: "Kelola Lowongan", tab: "recruiter-jobs", icon: Briefcase },
   { label: "Pelamar", tab: "recruiter-applicants", icon: Users },
   { label: "Talent Pool", tab: "recruiter-talent", icon: FileText },
-  { label: "Premium", tab: "recruiter-upgrade", icon: Crown },
+  { label: "Premium belum tersedia", tab: "recruiter-upgrade", icon: Crown, disabled: true },
   { label: "Profil", tab: "profil", icon: UserRound },
   { label: "Pengaturan", tab: "settings", icon: Settings }
 ];
@@ -170,11 +171,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             return (
               <button
                 key={`${item.tab}-${item.label}`}
-                onClick={() => setActiveTab(item.tab)}
-                className={`flex min-h-10 items-center gap-2 rounded-lg px-3 py-2 text-base font-medium leading-tight transition ${cls}`}
+                onClick={() => {
+                  if (!item.disabled) setActiveTab(item.tab);
+                }}
+                disabled={item.disabled}
+                className={`flex min-h-10 items-center gap-2 rounded-lg px-3 py-2 text-base font-medium leading-tight transition ${item.disabled ? "cursor-not-allowed text-slate-400" : cls}`}
               >
                 {Icon && <Icon className="h-4 w-4" />}
-                <span className={item.label === "Kelola Layanan" || item.label === "Kelola Lowongan" || item.label === "Post Lowongan" || item.label === "Talent Pool" ? "max-w-[86px]" : "whitespace-nowrap"}>{item.label}</span>
+                <span className={item.label === "Kelola Layanan" || item.label === "Kelola Lowongan" || item.label === "Post Lowongan" || item.label === "Talent Pool" || item.label === "Premium belum tersedia" ? "max-w-[96px]" : "whitespace-nowrap"}>{item.label}</span>
               </button>
             );
           })}
@@ -304,11 +308,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   key={`mobile-${item.tab}-${item.label}`}
                   onClick={() => {
-                    setActiveTab(item.tab);
+                    if (!item.disabled) setActiveTab(item.tab);
                     setMobileOpen(false);
                   }}
+                  disabled={item.disabled}
                   className={`flex h-11 items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold transition ${
-                    isActive ? activeClass : "text-slate-700 hover:bg-slate-50"
+                    item.disabled ? "cursor-not-allowed text-slate-400" : isActive ? activeClass : "text-slate-700 hover:bg-slate-50"
                   }`}
                 >
                   {Icon && <Icon className="h-4 w-4" />}
