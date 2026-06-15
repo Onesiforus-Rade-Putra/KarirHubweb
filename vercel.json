@@ -7,6 +7,10 @@
     {
       "source": "/api/recruiter/:path*",
       "destination": "/api/[...route]?route=recruiter/:path*"
+    },
+    {
+      "source": "/api/ai/:path*",
+      "destination": "/api/[...route]?route=ai/:path*"
     }
   ]
 }

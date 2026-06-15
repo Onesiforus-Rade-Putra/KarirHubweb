@@ -3,11 +3,12 @@ import { ResumeData } from "../../types";
 import {
   createResumeCheckout,
   downloadResumeExport,
-  enhanceResumeExperience,
   fetchResumeDraft,
-  fetchResumeKeywordSuggestions,
   fetchResumePaymentStatus,
   generateResume,
+  requestResumeAI,
+  ResumeAiAction,
+  ResumeAiData,
   ResumeDraftPayload,
   ResumePurchase,
   saveResumeDraft,
@@ -35,6 +36,12 @@ type Certification = ResumeDraftPayload["certifications"][number];
 type LanguageItem = ResumeDraftPayload["languages"][number];
 type CheckoutPackageId = "pdf" | "pdf-html" | "all";
 type PaymentMethodId = "qris" | "gopay" | "ovo" | "dana" | "shopeepay" | "bca-va" | "mandiri-va";
+type AiSuggestion =
+  | { kind: "summary"; title: string; professionalSummary: string }
+  | { kind: "experience"; title: string; experienceId: string; enhancedBullets: string[] }
+  | { kind: "keywords"; title: string; suggestedKeywords: string[] }
+  | { kind: "skills"; title: string; suggestedSkills: string[] };
+type LastAiRequest = { action: ResumeAiAction; experienceId?: string };
 
 interface GeneratedResume {
   personal: {
@@ -415,7 +422,7 @@ export const ATSBuilder: React.FC = () => {
   const [resume, setResume] = useState<ResumeData>(blankResume);
   const [portfolioLink, setPortfolioLink] = useState("");
   const [newSkill, setNewSkill] = useState("");
-  const [suggestedSkills, setSuggestedSkills] = useState(["Docker", "CI/CD", "AWS", "MongoDB"]);
+  const [suggestedSkills, setSuggestedSkills] = useState<string[]>([]);
   const [certifications, setCertifications] = useState<Certification[]>([]);
   const [languageItems, setLanguageItems] = useState<LanguageItem[]>([]);
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -435,6 +442,10 @@ export const ATSBuilder: React.FC = () => {
   const [isSimulatingPayment, setIsSimulatingPayment] = useState(false);
   const [isDownloading, setIsDownloading] = useState<"pdf" | "html" | null>(null);
   const [isEnhancingId, setIsEnhancingId] = useState<string | null>(null);
+  const [aiLoadingAction, setAiLoadingAction] = useState<ResumeAiAction | null>(null);
+  const [aiSuggestion, setAiSuggestion] = useState<AiSuggestion | null>(null);
+  const [aiError, setAiError] = useState("");
+  const [lastAiRequest, setLastAiRequest] = useState<LastAiRequest | null>(null);
   const [status, setStatus] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
   const hasPaid = purchase?.status === "paid";
 
@@ -612,38 +623,95 @@ export const ATSBuilder: React.FC = () => {
     }
   };
 
-  const handleEnhanceWithAI = async (id: string) => {
-    const target = resume.experience.find((item) => item.id === id);
-    if (!target) return;
-    setIsEnhancingId(id);
+  const buildAiRequestPayload = (action: ResumeAiAction, experienceId?: string) => {
+    const targetExperience = experienceId ? resume.experience.find((item) => item.id === experienceId) : null;
+    const resumeData = targetExperience
+      ? { resume: { title: resume.title, skills: resume.skills, experience: [targetExperience] } }
+      : {
+          resume: {
+            title: resume.title,
+            summary: resume.summary,
+            skills: resume.skills,
+            experience: resume.experience,
+            education: resume.education,
+          },
+          certifications,
+        };
+    return {
+      action,
+      resumeData,
+      targetRole: targetExperience?.position || resume.title,
+    };
+  };
+
+  const suggestionFromAiData = (action: ResumeAiAction, data: ResumeAiData, experienceId?: string): AiSuggestion | null => {
+    if (action === "summary" && data.professionalSummary) {
+      return { kind: "summary", title: "Professional Summary", professionalSummary: data.professionalSummary };
+    }
+    if (action === "enhance_bullets" && experienceId && data.enhancedBullets.length) {
+      return { kind: "experience", title: "Enhanced Experience Bullets", experienceId, enhancedBullets: data.enhancedBullets };
+    }
+    if (action === "keywords" && data.suggestedKeywords.length) {
+      return { kind: "keywords", title: "Keyword Suggestions", suggestedKeywords: data.suggestedKeywords };
+    }
+    if (action === "skills" && data.suggestedSkills.length) {
+      return { kind: "skills", title: "Skill Suggestions", suggestedSkills: data.suggestedSkills };
+    }
+    return null;
+  };
+
+  const runResumeAi = async (action: ResumeAiAction, experienceId?: string) => {
+    if (!resume.title && action !== "enhance_bullets") {
+      setAiError("Isi Professional Headline atau target role terlebih dahulu.");
+      return;
+    }
+
+    setAiLoadingAction(action);
+    setIsEnhancingId(action === "enhance_bullets" ? experienceId || null : null);
+    setAiError("");
+    setLastAiRequest({ action, experienceId });
+    setStatus({ type: "info", text: "Meminta rekomendasi AI..." });
     try {
-      const { enhancedText } = await enhanceResumeExperience({ text: target.description, jobTitle: target.position || resume.title });
-      handleUpdateField("work", id, "description", enhancedText);
-      setStatus({ type: "success", text: "Experience berhasil diperbaiki dengan rule-based AI assistant." });
-    } catch {
-      handleUpdateField(
-        "work",
-        id,
-        "description",
-        "Led cross-functional delivery of core initiatives aligned with business goals.\nImplemented structured improvements that increased quality, speed, and team visibility.\nDocumented outcomes with measurable impact for ATS-friendly screening."
-      );
-      setStatus({ type: "info", text: "AI backend belum tersedia. Menggunakan enhancement lokal." });
+      const result = await requestResumeAI(buildAiRequestPayload(action, experienceId));
+      const nextSuggestion = suggestionFromAiData(action, result.data, experienceId);
+      if (!nextSuggestion) throw new Error("AI belum mengembalikan rekomendasi yang bisa ditinjau.");
+      setAiSuggestion(nextSuggestion);
+      if (nextSuggestion.kind === "skills") setSuggestedSkills(nextSuggestion.suggestedSkills);
+      setStatus({ type: "success", text: "Rekomendasi AI siap ditinjau. Klik Apply jika sudah sesuai." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI resume gagal memproses permintaan.";
+      setAiError(message);
+      setStatus({ type: "error", text: message });
     } finally {
+      setAiLoadingAction(null);
       setIsEnhancingId(null);
     }
   };
 
-  const handleApplyKeywordsSuggested = async () => {
-    try {
-      const { keywords } = await fetchResumeKeywordSuggestions({ jobTitle: resume.title, skills: resume.skills });
-      updateResume({ skills: Array.from(new Set([...resume.skills, ...keywords])) });
-      setSuggestedSkills((prev) => prev.filter((item) => !keywords.includes(item)));
-      setStatus({ type: "success", text: "Keyword rekomendasi berhasil ditambahkan." });
-    } catch {
-      const keywords = ["Agile", "Problem Solving", "Cross-functional Collaboration"];
-      updateResume({ skills: Array.from(new Set([...resume.skills, ...keywords])) });
-      setStatus({ type: "info", text: "Keyword backend belum tersedia. Menggunakan rekomendasi lokal." });
+  const handleEnhanceWithAI = (id: string) => runResumeAi("enhance_bullets", id);
+  const handleGenerateSummary = () => runResumeAi("summary");
+  const handleGenerateKeywords = () => runResumeAi("keywords");
+  const handleGenerateSkills = () => runResumeAi("skills");
+  const handleRetryAi = () => {
+    if (!lastAiRequest) return;
+    runResumeAi(lastAiRequest.action, lastAiRequest.experienceId);
+  };
+
+  const handleApplyAiSuggestion = () => {
+    if (!aiSuggestion) return;
+    if (aiSuggestion.kind === "summary") {
+      updateResume({ summary: aiSuggestion.professionalSummary });
+    } else if (aiSuggestion.kind === "experience") {
+      handleUpdateField("work", aiSuggestion.experienceId, "description", aiSuggestion.enhancedBullets.join("\n"));
+    } else if (aiSuggestion.kind === "keywords") {
+      updateResume({ skills: Array.from(new Set([...resume.skills, ...aiSuggestion.suggestedKeywords])) });
+    } else if (aiSuggestion.kind === "skills") {
+      updateResume({ skills: Array.from(new Set([...resume.skills, ...aiSuggestion.suggestedSkills])) });
+      setSuggestedSkills((prev) => prev.filter((item) => !aiSuggestion.suggestedSkills.includes(item)));
     }
+    setAiSuggestion(null);
+    setAiError("");
+    setStatus({ type: "success", text: "Rekomendasi AI diterapkan. Review kembali sebelum menyimpan draft." });
   };
 
   const openPrintableHtml = (html: string) => {
@@ -804,6 +872,42 @@ export const ATSBuilder: React.FC = () => {
           </div>
         )}
 
+        {(aiError || aiSuggestion) && (
+          <div className={`mb-6 rounded-lg border p-5 text-sm ${aiError ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+            {aiError ? (
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="font-bold">{aiError}</p>
+                <button onClick={handleRetryAi} disabled={!lastAiRequest || aiLoadingAction !== null} className={`${actionButtonClass} bg-red-600 text-white hover:bg-red-700`}>
+                  {aiLoadingAction ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  Coba Lagi
+                </button>
+              </div>
+            ) : aiSuggestion ? (
+              <div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="font-black">{aiSuggestion.title}</p>
+                    <div className="mt-3 rounded-lg bg-white/70 p-4 font-semibold leading-6 text-slate-700">
+                      {aiSuggestion.kind === "summary" && <p>{aiSuggestion.professionalSummary}</p>}
+                      {aiSuggestion.kind === "experience" && (
+                        <ul className="list-disc space-y-1 pl-5">
+                          {aiSuggestion.enhancedBullets.map((bullet) => <li key={bullet}>{bullet}</li>)}
+                        </ul>
+                      )}
+                      {aiSuggestion.kind === "keywords" && <p>{aiSuggestion.suggestedKeywords.join(" | ")}</p>}
+                      {aiSuggestion.kind === "skills" && <p>{aiSuggestion.suggestedSkills.join(" | ")}</p>}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button onClick={handleApplyAiSuggestion} className={`${actionButtonClass} bg-emerald-600 text-white hover:bg-emerald-700`}>Apply</button>
+                    <button onClick={() => setAiSuggestion(null)} className={`${actionButtonClass} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50`}>Dismiss</button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+
         {isLoadingDraft ? (
           <Card>
             <div className="flex min-h-[300px] items-center justify-center gap-3 text-sm font-black text-slate-500">
@@ -828,6 +932,10 @@ export const ATSBuilder: React.FC = () => {
                     <Field label="Professional Summary" required>
                       <textarea className={textareaClass} rows={5} value={resume.summary} onChange={(event) => updateResume({ summary: event.target.value })} placeholder="2-3 sentences with role, core skills, and measurable value." />
                     </Field>
+                    <button onClick={handleGenerateSummary} disabled={aiLoadingAction === "summary"} className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg bg-purple-50 px-4 text-sm font-black text-purple-700 hover:bg-purple-100 disabled:opacity-60">
+                      {aiLoadingAction === "summary" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                      {aiLoadingAction === "summary" ? "Generating..." : "Generate Summary"}
+                    </button>
                   </div>
                 </div>
               </Card>
@@ -928,7 +1036,14 @@ export const ATSBuilder: React.FC = () => {
                     {suggestedSkills.map((skill) => (
                       <button key={skill} onClick={() => { updateResume({ skills: Array.from(new Set([...resume.skills, skill])) }); setSuggestedSkills(suggestedSkills.filter((item) => item !== skill)); }} className="rounded-lg border border-purple-200 bg-white px-3 py-1.5 text-sm font-black text-purple-700 hover:bg-purple-100">+ {skill}</button>
                     ))}
-                    <button onClick={handleApplyKeywordsSuggested} className="rounded-lg bg-purple-700 px-3 py-1.5 text-sm font-black text-white hover:bg-purple-800">Generate Keywords</button>
+                    <button onClick={handleGenerateKeywords} disabled={aiLoadingAction === "keywords"} className="inline-flex items-center gap-2 rounded-lg bg-purple-700 px-3 py-1.5 text-sm font-black text-white hover:bg-purple-800 disabled:opacity-60">
+                      {aiLoadingAction === "keywords" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                      Keyword Suggestions
+                    </button>
+                    <button onClick={handleGenerateSkills} disabled={aiLoadingAction === "skills"} className="inline-flex items-center gap-2 rounded-lg border border-purple-200 bg-white px-3 py-1.5 text-sm font-black text-purple-700 hover:bg-purple-100 disabled:opacity-60">
+                      {aiLoadingAction === "skills" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                      Skill Suggestions
+                    </button>
                   </div>
                 </div>
               </Card>

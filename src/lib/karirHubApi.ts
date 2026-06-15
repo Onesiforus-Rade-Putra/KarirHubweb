@@ -97,6 +97,23 @@ export async function createAIPhotoRequest(payload: {
   });
 }
 
+export type AIPhotoStyle = "corporate" | "smart_casual" | "fresh_graduate";
+export type AIPhotoBackground = "white" | "light_gray" | "office";
+export type AIPhotoAttire = "formal" | "blazer" | "smart_casual";
+
+export async function editAIPhoto(payload: {
+  image: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  style: AIPhotoStyle;
+  background: AIPhotoBackground;
+  attire: AIPhotoAttire;
+}) {
+  return apiRequest<{ success: true; imageBase64: string; mimeType: "image/png" | "image/jpeg" | "image/webp" }>("/api/ai/photo/edit", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export interface SellerEarningsSummary {
   total_orders: number;
   completed_orders: number;
@@ -426,6 +443,27 @@ export async function enhanceResumeExperience(payload: { text: string; jobTitle?
 
 export async function fetchResumeKeywordSuggestions(payload: { jobTitle?: string; skills: string[] }) {
   return apiRequest<{ keywords: string[] }>("/api/resume-builder/keywords", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export type ResumeAiAction = "summary" | "enhance_bullets" | "keywords" | "skills";
+
+export interface ResumeAiData {
+  professionalSummary: string;
+  enhancedBullets: string[];
+  suggestedKeywords: string[];
+  suggestedSkills: string[];
+}
+
+export async function requestResumeAI(payload: {
+  action: ResumeAiAction;
+  resumeData: Record<string, unknown>;
+  targetRole: string;
+  jobDescription?: string;
+}) {
+  return apiRequest<{ success: true; data: ResumeAiData }>("/api/ai/resume", {
     method: "POST",
     body: JSON.stringify(payload),
   });
