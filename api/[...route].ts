@@ -3,6 +3,7 @@ import { mapApplication, mapJob, mapOrder, mapRecruiterApplication, mapSellerOrd
 import { recruiterApplicationStatusToPublic, requireRecruiter } from "./_lib/recruiter.js";
 import { parseServiceCategory, requireSeller, sellerOrderStatusToPublic } from "./_lib/seller.js";
 import { supabaseAdmin, supabaseAnon } from "./_lib/supabase.js";
+import { GoogleGenAI } from "@google/genai";
 
 const serviceSelect = "id,title,provider_name,provider_avatar,category,rating,reviews_count,price,duration,description,active,status,seller_id,created_at";
 const publicServiceSelect = "id,title,provider_name,provider_avatar,category,rating,reviews_count,price,duration,description,active";
@@ -135,7 +136,9 @@ function handlerNameForRoute(route: string, method: string) {
   if (route === "orders") return "handleOrders";
   if (route === "transactions") return "handleTransactions";
   if (route === "applications") return "handleApplications";
+  if (route === "ai/photo/edit") return "handleAIPhotoEdit";
   if (route === "ai-photo") return "handleAIPhoto";
+  if (route === "ai/resume") return "handleAIResume";
   if (route === "resume-builder" || route.startsWith("resume-builder/")) return "handleResumeBuilder";
   return "unmatched";
 }
@@ -1014,6 +1017,184 @@ async function handleApplications(req: any, res: any) {
   }
 
   return sendError(res, 405, "Method not allowed");
+}
+
+const aiPhotoStyles = ["corporate", "smart_casual", "fresh_graduate"] as const;
+const aiPhotoBackgrounds = ["white", "light_gray", "office"] as const;
+const aiPhotoAttires = ["formal", "blazer", "smart_casual"] as const;
+const aiPhotoMaxBytes = 4 * 1024 * 1024;
+const aiPhotoMaxJsonBytes = Math.ceil(aiPhotoMaxBytes * 1.38) + 4096;
+
+function normalizeEnum<T extends readonly string[]>(value: any, allowed: T): T[number] | null {
+  return allowed.includes(value) ? value : null;
+}
+
+function parseBase64ImageInput(body: any) {
+  const rawImage = typeof body?.image === "string" ? body.image : "";
+  const explicitMimeType = typeof body?.mimeType === "string" ? body.mimeType.toLowerCase() : "";
+  const dataUrlMatch = rawImage.match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,([\s\S]+)$/i);
+  const mimeType = (dataUrlMatch?.[1] || explicitMimeType).toLowerCase().replace("image/jpg", "image/jpeg");
+  const base64 = (dataUrlMatch?.[2] || rawImage).replace(/\s/g, "");
+
+  if (!base64) return { status: 400, error: "Foto wajib diunggah.", buffer: null, mimeType: "" };
+  if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
+    return { status: 400, error: "Format foto harus JPG, PNG, atau WebP.", buffer: null, mimeType: "" };
+  }
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+    return { status: 400, error: "Format base64 foto tidak valid.", buffer: null, mimeType: "" };
+  }
+  if (Math.ceil((base64.length * 3) / 4) > aiPhotoMaxBytes) {
+    return { status: 413, error: "Ukuran foto maksimal 4 MB untuk prototype.", buffer: null, mimeType: "" };
+  }
+
+  const buffer = Buffer.from(base64, "base64");
+  if (!buffer.length) return { status: 400, error: "Foto tidak valid.", buffer: null, mimeType: "" };
+  if (buffer.byteLength > aiPhotoMaxBytes) return { status: 413, error: "Ukuran foto maksimal 4 MB untuk prototype.", buffer: null, mimeType: "" };
+
+  const isJpeg = buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  const isPng = buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isWebp = buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
+  const magicMatches =
+    (mimeType === "image/jpeg" && isJpeg) ||
+    (mimeType === "image/png" && isPng) ||
+    (mimeType === "image/webp" && isWebp);
+
+  if (!magicMatches) return { status: 400, error: "File yang diunggah bukan gambar valid.", buffer: null, mimeType: "" };
+  return { status: 200, error: null, buffer, mimeType };
+}
+
+function buildAIPhotoEditPrompt(style: string, background: string, attire: string) {
+  const styleLabels: Record<string, string> = {
+    corporate: "corporate and polished",
+    smart_casual: "smart casual and approachable",
+    fresh_graduate: "fresh graduate, clean, confident, entry-level professional",
+  };
+  const backgroundLabels: Record<string, string> = {
+    white: "plain white background",
+    light_gray: "plain light gray background",
+    office: "subtle modern office background with natural blur",
+  };
+  const attireLabels: Record<string, string> = {
+    formal: "formal professional attire",
+    blazer: "professional blazer",
+    smart_casual: "smart casual professional clothing",
+  };
+
+  return [
+    "Edit the uploaded portrait into a realistic professional CV headshot. Preserve the person’s identity, facial structure, age, skin tone, hairstyle, and natural features. Use a clean head-and-shoulders composition, professional lighting, realistic skin texture, appropriate professional clothing, and the selected background. Do not change identity, ethnicity, gender presentation, or add unrealistic facial features. Do not add text, logos, watermarks, or decorative elements.",
+    `Selected style: ${styleLabels[style] || style}.`,
+    `Selected background: ${backgroundLabels[background] || background}.`,
+    `Selected attire: ${attireLabels[attire] || attire}.`,
+  ].join("\n");
+}
+
+function extractCloudflareImageBase64(payload: any): string {
+  const candidates = [
+    payload?.image,
+    payload?.result?.image,
+    payload?.result?.images?.[0],
+    payload?.result?.b64_json,
+    payload?.result?.data?.[0]?.b64_json,
+    payload?.data?.[0]?.b64_json,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
+    }
+  }
+  return "";
+}
+
+async function parseCloudflareImageResponse(response: Response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.startsWith("image/")) {
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return { imageBase64: bytes.toString("base64"), mimeType: contentType.split(";")[0] || "image/png" };
+  }
+
+  const text = await response.text();
+  let payload: any = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+
+  const imageBase64 = extractCloudflareImageBase64(payload);
+  const mimeType = payload?.mimeType || payload?.result?.mimeType || payload?.result?.content_type || "image/png";
+  return { imageBase64, mimeType };
+}
+
+async function handleAIPhotoEdit(req: any, res: any) {
+  const contentLength = Number(req.headers["content-length"] || 0);
+  if (contentLength > aiPhotoMaxJsonBytes) {
+    return sendError(res, 413, "Payload foto terlalu besar. Maksimal 4 MB untuk file gambar.");
+  }
+
+  const { user, error: authError } = await requireUser(req, supabaseAdmin);
+  if (!user) return sendError(res, 401, authError || "Session tidak valid.");
+  if (req.method !== "POST") return sendError(res, 405, "Method not allowed");
+
+  const style = normalizeEnum(req.body?.style, aiPhotoStyles);
+  const background = normalizeEnum(req.body?.background, aiPhotoBackgrounds);
+  const attire = normalizeEnum(req.body?.attire, aiPhotoAttires);
+  if (!style) return sendError(res, 400, "style tidak valid.");
+  if (!background) return sendError(res, 400, "background tidak valid.");
+  if (!attire) return sendError(res, 400, "attire tidak valid.");
+
+  const parsedImage = parseBase64ImageInput(req.body || {});
+  if (parsedImage.error || !parsedImage.buffer) return sendError(res, parsedImage.status || 400, parsedImage.error || "Foto tidak valid.");
+
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+  if (!accountId || !apiToken) return sendError(res, 500, "Konfigurasi Cloudflare Workers AI belum tersedia di server.");
+
+  const model = process.env.CLOUDFLARE_IMAGE_MODEL || "@cf/runwayml/stable-diffusion-v1-5-img2img";
+  const modelPath = model.split("/").map((part) => encodeURIComponent(part)).join("/");
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${modelPath}`;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        prompt: buildAIPhotoEditPrompt(style, background, attire),
+        image: Array.from(parsedImage.buffer),
+        strength: 0.35,
+        guidance: 7.5,
+        num_steps: 20,
+      }),
+    });
+
+    if (!response.ok) {
+      const status = response.status;
+      console.error("[ai photo cloudflare error]", { userId: user.id, status, model });
+      if (status === 400) return sendError(res, 400, "Request AI Foto tidak valid untuk model Cloudflare saat ini.");
+      if (status === 401) return sendError(res, 401, "Konfigurasi Cloudflare Workers AI belum valid.");
+      if (status === 403) return sendError(res, 403, "Akses Cloudflare Workers AI ditolak untuk model atau akun ini.");
+      if (status === 413) return sendError(res, 413, "Payload foto terlalu besar untuk Cloudflare Workers AI.");
+      if (status === 402 || status === 429) return sendError(res, 429, "Kuota gratis AI Foto sedang habis atau terkena rate limit. Coba lagi nanti.");
+      return sendError(res, 500, "AI Foto CV belum bisa memproses foto. Coba lagi sebentar lagi.");
+    }
+
+    const { imageBase64, mimeType } = await parseCloudflareImageResponse(response);
+    if (!imageBase64) return sendError(res, 500, "AI belum mengembalikan gambar. Coba lagi sebentar lagi.");
+    return sendJson(res, 200, { success: true, imageBase64, mimeType: mimeType || "image/png" });
+  } catch (error) {
+    console.error("[ai photo cloudflare exception]", {
+      userId: user.id,
+      style,
+      background,
+      attire,
+      model,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return sendError(res, 500, "AI Foto CV belum bisa memproses foto. Coba lagi sebentar lagi.");
+  }
 }
 
 async function handleAIPhoto(req: any, res: any) {
@@ -1898,6 +2079,170 @@ function suggestResumeKeywords(jobTitle?: string, skills: string[] = []) {
   return Array.from(suggestions).slice(0, 8);
 }
 
+const resumeAiActions = ["summary", "enhance_bullets", "keywords", "skills"] as const;
+type ResumeAiAction = typeof resumeAiActions[number];
+
+const resumeAiEmptyData = {
+  professionalSummary: "",
+  enhancedBullets: [] as string[],
+  suggestedKeywords: [] as string[],
+  suggestedSkills: [] as string[],
+};
+
+const resumeAiJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["professionalSummary", "enhancedBullets", "suggestedKeywords", "suggestedSkills"],
+  properties: {
+    professionalSummary: { type: "string" },
+    enhancedBullets: { type: "array", items: { type: "string" } },
+    suggestedKeywords: { type: "array", items: { type: "string" } },
+    suggestedSkills: { type: "array", items: { type: "string" } },
+  },
+};
+
+function compactText(value: any, maxLength = 1200) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function compactList(value: any, maxItems = 12, maxItemLength = 80) {
+  return Array.isArray(value)
+    ? value.map((item) => compactText(item, maxItemLength)).filter(Boolean).slice(0, maxItems)
+    : [];
+}
+
+function sanitizeResumeForAi(resumeData: any, action: ResumeAiAction) {
+  const rawResume = resumeData?.resume ? resumeData.resume : resumeData || {};
+  const experience = Array.isArray(rawResume.experience) ? rawResume.experience : [];
+  const education = Array.isArray(rawResume.education) ? rawResume.education : [];
+  const certifications = Array.isArray(resumeData?.certifications) ? resumeData.certifications : [];
+
+  const base = {
+    targetTitle: compactText(rawResume.title, 120),
+    currentSummary: compactText(rawResume.summary, 700),
+    skills: compactList(rawResume.skills, 24, 60),
+    experience: experience.slice(0, action === "enhance_bullets" ? 1 : 5).map((item: any) => ({
+      position: compactText(item.position, 120),
+      company: compactText(item.company, 120),
+      period: [item.startDate, item.endDate].map((part) => compactText(part, 40)).filter(Boolean).join(" - "),
+      bullets: compactText(item.description, action === "enhance_bullets" ? 1800 : 900),
+    })),
+    education: education.slice(0, 3).map((item: any) => ({
+      degree: compactText(item.degree, 120),
+      school: compactText(item.school, 120),
+      details: compactText(item.description, 300),
+    })),
+    certifications: certifications.slice(0, 6).map((item: any) => ({
+      name: compactText(item.name, 120),
+      issuer: compactText(item.issuer, 120),
+      year: compactText(item.year, 20),
+    })),
+  };
+
+  if (action === "enhance_bullets") {
+    return { ...base, currentSummary: "", education: [], certifications: [] };
+  }
+
+  return base;
+}
+
+function buildResumeAiPrompt(payload: {
+  action: ResumeAiAction;
+  resumeData: any;
+  targetRole: string;
+  jobDescription: string;
+}) {
+  const sanitized = sanitizeResumeForAi(payload.resumeData, payload.action);
+  const taskByAction: Record<ResumeAiAction, string> = {
+    summary: "Write a 2-4 sentence ATS-friendly professional summary. Use only supplied facts. Leave other arrays empty.",
+    enhance_bullets: "Rewrite the supplied experience bullets with stronger action verbs and clearer outcomes. Do not add new employers, roles, tools, metrics, or achievements. Preserve existing metrics only. Leave summary and suggestion arrays empty.",
+    keywords: "Suggest relevant ATS keywords for the target role and optional job description. Return only keywords that fit the supplied background. Leave other fields empty.",
+    skills: "Suggest relevant skills for the target role and optional job description. Do not imply the user has skills not supported by supplied resume data; suggest skills as review candidates. Leave other fields empty.",
+  };
+
+  return JSON.stringify({
+    task: taskByAction[payload.action],
+    action: payload.action,
+    targetRole: payload.targetRole,
+    jobDescription: payload.jobDescription,
+    resume: sanitized,
+    outputRules: [
+      "Return JSON only.",
+      "Never invent employment, education, certifications, skills, metrics, or achievements.",
+      "For enhance_bullets, return one bullet per array item.",
+      "Keep content concise and professional.",
+    ],
+  });
+}
+
+function normalizeResumeAiData(value: any) {
+  return {
+    professionalSummary: compactText(value?.professionalSummary, 1200),
+    enhancedBullets: compactList(value?.enhancedBullets, 8, 240),
+    suggestedKeywords: compactList(value?.suggestedKeywords, 18, 80),
+    suggestedSkills: compactList(value?.suggestedSkills, 18, 80),
+  };
+}
+
+async function handleAIResume(req: any, res: any) {
+  const { user, error: authError } = await requireUser(req, supabaseAdmin);
+  if (!user) return sendError(res, 401, authError || "Session tidak valid.");
+  if (req.method !== "POST") return sendError(res, 405, "Method not allowed");
+
+  const { action, resumeData, targetRole, jobDescription } = req.body || {};
+  if (!resumeAiActions.includes(action)) return sendError(res, 400, "Action AI resume tidak valid.");
+  if (!resumeData || typeof resumeData !== "object") return sendError(res, 400, "Data resume wajib dikirim.");
+
+  const safeTargetRole = compactText(targetRole || resumeData?.resume?.title || resumeData?.title, 120);
+  if (!safeTargetRole) return sendError(res, 400, "Target role wajib diisi.");
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return sendError(res, 503, "GEMINI_API_KEY belum tersedia di server.");
+
+  const client = new GoogleGenAI({ apiKey });
+  const model = process.env.GEMINI_TEXT_MODEL || "gemini-3.1-flash-lite";
+
+  try {
+    const response = await client.models.generateContent({
+      model,
+      contents: buildResumeAiPrompt({
+        action,
+        resumeData,
+        targetRole: safeTargetRole,
+        jobDescription: compactText(jobDescription, 4000),
+      }),
+      config: {
+        systemInstruction: "You are a professional ATS resume editor. Improve resume content without inventing employment, education, certifications, skills, metrics, or achievements. Preserve facts supplied by the user. Return concise, professional, ATS-friendly content.",
+        maxOutputTokens: 1000,
+        responseMimeType: "application/json",
+        responseSchema: resumeAiJsonSchema as any,
+      },
+    });
+
+    const outputText = response.text || "";
+    const parsed = outputText ? JSON.parse(outputText) : resumeAiEmptyData;
+    return sendJson(res, 200, {
+      success: true,
+      data: normalizeResumeAiData(parsed),
+    });
+  } catch (error) {
+    console.error("[ai resume error]", {
+      action,
+      userId: user.id,
+      model,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    if (message.includes("quota") || message.includes("rate") || message.includes("429")) {
+      return sendError(res, 429, "Kuota gratis AI resume sedang habis atau terkena rate limit. Coba lagi nanti.");
+    }
+    if (message.includes("api key") || message.includes("permission") || message.includes("auth")) {
+      return sendError(res, 503, "Konfigurasi Gemini AI belum valid di server.");
+    }
+    return sendError(res, 502, "AI resume belum bisa memproses permintaan. Coba lagi sebentar lagi.");
+  }
+}
+
 function escapeHtml(value: any) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -2407,6 +2752,8 @@ export default async function handler(req: any, res: any) {
     if (route === "orders") return handleOrders(req, res);
     if (route === "transactions") return handleTransactions(req, res);
     if (route === "applications") return handleApplications(req, res);
+    if (route === "ai/photo/edit") return handleAIPhotoEdit(req, res);
+    if (route === "ai/resume") return handleAIResume(req, res);
     if (route === "ai-photo") return handleAIPhoto(req, res);
     if (route === "resume-builder" || route.startsWith("resume-builder/")) return handleResumeBuilder(route, req, res);
 

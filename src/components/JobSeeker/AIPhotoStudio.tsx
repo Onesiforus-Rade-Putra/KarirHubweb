@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Building2,
@@ -19,8 +19,24 @@ import {
   Wallet,
   XCircle
 } from "lucide-react";
+import { AIPhotoAttire, AIPhotoBackground, AIPhotoStyle, editAIPhoto } from "../../lib/karirHubApi";
 
-const styles = ["Formal (Jas)", "Business Casual", "Creative Startup", "PNS / BUMN (Merah)"];
+const styleOptions: Array<{ id: AIPhotoStyle; label: string; desc: string }> = [
+  { id: "corporate", label: "Corporate", desc: "Rapi, profesional, cocok untuk kantor formal." },
+  { id: "smart_casual", label: "Smart Casual", desc: "Hangat dan modern untuk startup atau tech." },
+  { id: "fresh_graduate", label: "Fresh Graduate", desc: "Bersih, percaya diri, ramah untuk entry-level." }
+];
+const backgroundOptions: Array<{ id: AIPhotoBackground; label: string }> = [
+  { id: "white", label: "Putih" },
+  { id: "light_gray", label: "Abu Terang" },
+  { id: "office", label: "Office" }
+];
+const attireOptions: Array<{ id: AIPhotoAttire; label: string }> = [
+  { id: "formal", label: "Formal" },
+  { id: "blazer", label: "Blazer" },
+  { id: "smart_casual", label: "Smart Casual" }
+];
+const maxImageSize = 4 * 1024 * 1024;
 const servicePrice = 15000;
 const adminFee = 375;
 const totalPayment = servicePrice + adminFee;
@@ -95,27 +111,28 @@ interface AIPhotoStudioProps {
 
 export const AIPhotoStudio: React.FC<AIPhotoStudioProps> = ({ onSaveRequest, onSupport }) => {
   const [step, setStep] = useState<StudioStep>("upload");
-  const [selectedStyle, setSelectedStyle] = useState("Formal (Jas)");
+  const [selectedStyle, setSelectedStyle] = useState<AIPhotoStyle>("corporate");
+  const [selectedBackground, setSelectedBackground] = useState<AIPhotoBackground>("white");
+  const [selectedAttire, setSelectedAttire] = useState<AIPhotoAttire>("formal");
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedMimeType, setUploadedMimeType] = useState<"image/jpeg" | "image/png" | "image/webp" | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState("");
+  const [resultImage, setResultImage] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("QRIS");
   const [copied, setCopied] = useState(false);
   const [hasPaid, setHasPaid] = useState(false);
+  const [hasUsedResult, setHasUsedResult] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isSavingResult, setIsSavingResult] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (step !== "generating") return;
 
-    setProgress(0);
     const timer = setInterval(() => {
-      setProgress((value) => {
-        if (value >= 100) {
-          clearInterval(timer);
-          setTimeout(() => setStep("result"), 500);
-          return 100;
-        }
-        return value + 10;
-      });
-    }, 150);
+      setProgress((value) => Math.min(value + 6, 92));
+    }, 350);
 
     return () => clearInterval(timer);
   }, [step]);
@@ -123,25 +140,67 @@ export const AIPhotoStudio: React.FC<AIPhotoStudioProps> = ({ onSaveRequest, onS
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    setErrorMessage("");
+
+    const safeMimeType = file.type === "image/jpg" ? "image/jpeg" : file.type;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(safeMimeType)) {
+      setErrorMessage("Format foto harus JPG, PNG, atau WebP.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > maxImageSize) {
+      setErrorMessage("Ukuran foto maksimal 4 MB untuk prototype.");
+      event.target.value = "";
+      return;
+    }
 
     const reader = new FileReader();
-    reader.onload = () => setUploadedImage(reader.result as string);
+    reader.onload = () => {
+      setUploadedImage(reader.result as string);
+      setUploadedMimeType(safeMimeType as "image/jpeg" | "image/png" | "image/webp");
+      setUploadedFileName(file.name);
+      setResultImage(null);
+      setHasPaid(false);
+      setHasUsedResult(false);
+    };
+    reader.onerror = () => setErrorMessage("Foto gagal dibaca. Coba pilih file lain.");
     reader.readAsDataURL(file);
   };
 
   const handleCamera = () => {
-    setUploadedImage("https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600");
+    fileInputRef.current?.click();
   };
 
-  const handleGenerate = () => {
-    if (!uploadedImage) {
-      setUploadedImage("https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600");
+  const handleGenerate = async () => {
+    if (!uploadedImage || !uploadedMimeType) {
+      setErrorMessage("Unggah foto terlebih dahulu sebelum generate.");
+      return;
     }
+    setErrorMessage("");
     setHasPaid(false);
+    setProgress(8);
     setStep("generating");
+
+    try {
+      const result = await editAIPhoto({
+        image: uploadedImage,
+        mimeType: uploadedMimeType,
+        style: selectedStyle,
+        background: selectedBackground,
+        attire: selectedAttire
+      });
+      setProgress(100);
+      setResultImage(`data:${result.mimeType};base64,${result.imageBase64}`);
+      setTimeout(() => setStep("result"), 250);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message.replace(/^\/api\/ai\/photo\/edit:\s*/, "") : "Generate Foto CV gagal.");
+      setStep("upload");
+      setProgress(0);
+    }
   };
 
   const markPaid = async () => {
+    if (!resultImage) return;
     await onSaveRequest?.({
       style: selectedStyle,
       sourceImageUrl: uploadedImage || undefined,
@@ -160,14 +219,26 @@ export const AIPhotoStudio: React.FC<AIPhotoStudioProps> = ({ onSaveRequest, onS
     setStep("qris");
   };
 
-  const resultImage =
-    selectedStyle === "Business Casual"
-      ? "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=700"
-      : selectedStyle === "Creative Startup"
-        ? "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=700"
-        : selectedStyle === "PNS / BUMN (Merah)"
-          ? "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=700"
-          : "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=700";
+  const handleUseResult = async () => {
+    if (!resultImage) return;
+    setIsSavingResult(true);
+    setErrorMessage("");
+    try {
+      await onSaveRequest?.({
+        style: `${selectedStyle}/${selectedBackground}/${selectedAttire}`,
+        sourceImageUrl: undefined,
+        resultImageUrl: resultImage,
+        paymentMethod: "Gunakan Hasil"
+      });
+      setHasPaid(true);
+      setHasUsedResult(true);
+      setStep("success");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Hasil belum bisa digunakan. Coba lagi.");
+    } finally {
+      setIsSavingResult(false);
+    }
+  };
 
   if (step === "checkout") {
     return (
@@ -338,20 +409,21 @@ export const AIPhotoStudio: React.FC<AIPhotoStudioProps> = ({ onSaveRequest, onS
 
   if (step === "success" || step === "failed") {
     const ok = step === "success";
+    const isAiResultAccepted = ok && hasUsedResult;
     return (
       <div className="min-h-screen bg-slate-50 px-8 py-16 text-slate-950">
         <div className="mx-auto max-w-[980px] text-center">
           <div className={`mx-auto flex h-24 w-24 items-center justify-center rounded-full ${ok ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-600"}`}>
             {ok ? <CheckCircle2 className="h-16 w-16" /> : <XCircle className="h-16 w-16" />}
           </div>
-          <h1 className="mt-7 text-[40px] font-black">{ok ? "Pembayaran Berhasil!" : "Pembayaran Gagal"}</h1>
-          <p className="mt-3 text-xl text-slate-600">{ok ? "Transaksi Anda telah berhasil diproses" : "Maaf, transaksi Anda tidak dapat diselesaikan"}</p>
+          <h1 className="mt-7 text-[40px] font-black">{isAiResultAccepted ? "Hasil Foto CV Siap Digunakan" : ok ? "Pembayaran Berhasil!" : "Pembayaran Gagal"}</h1>
+          <p className="mt-3 text-xl text-slate-600">{isAiResultAccepted ? "Hasil sudah dipilih dan tersimpan sebagai request AI Foto CV Anda." : ok ? "Transaksi Anda telah berhasil diproses" : "Maaf, transaksi Anda tidak dapat diselesaikan"}</p>
 
           <div className="mt-9 text-left">
             <Notice
               tone={ok ? "success" : "danger"}
-              title={ok ? "Layanan Anda sudah aktif" : "Transaksi Gagal"}
-              desc={ok ? "Silakan download hasil foto CV HD Anda." : "Transaksi tidak dapat diproses atau waktu pembayaran telah habis."}
+              title={isAiResultAccepted ? "Hasil sudah dipilih" : ok ? "Layanan Anda sudah aktif" : "Transaksi Gagal"}
+              desc={isAiResultAccepted ? "Tetap periksa hasil akhir sebelum dipakai di CV, LinkedIn, atau lamaran kerja." : ok ? "Silakan download hasil foto CV HD Anda." : "Transaksi tidak dapat diproses atau waktu pembayaran telah habis."}
             />
           </div>
 
@@ -359,10 +431,10 @@ export const AIPhotoStudio: React.FC<AIPhotoStudioProps> = ({ onSaveRequest, onS
             <h2 className="text-xl font-black">Detail Transaksi</h2>
             <div className="mt-5">
               <Row label="Nomor Transaksi" value={transactionId} />
-              {ok && <Row label="Layanan" value="AI Foto CV HD" />}
-              {ok && <Row label="Metode Pembayaran" value={paymentMethod} />}
-              <Row label="Total Pembayaran" value={<span className={ok ? "text-blue-600" : ""}>{formatPrice(totalPayment)}</span>} />
-              {ok && <Row label="Tanggal" value="19 Mei 2026" />}
+              {ok && <Row label="Layanan" value={isAiResultAccepted ? "AI Foto CV" : "AI Foto CV HD"} />}
+              {ok && !isAiResultAccepted && <Row label="Metode Pembayaran" value={paymentMethod} />}
+              {!isAiResultAccepted && <Row label="Total Pembayaran" value={<span className={ok ? "text-blue-600" : ""}>{formatPrice(totalPayment)}</span>} />}
+              {ok && <Row label="Tanggal" value={new Date().toLocaleDateString("id-ID")} />}
               <Row label="Status" value={<span className={`rounded-full px-3 py-1 text-sm ${ok ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{ok ? "Berhasil" : "Gagal"}</span>} />
             </div>
           </section>
@@ -371,12 +443,12 @@ export const AIPhotoStudio: React.FC<AIPhotoStudioProps> = ({ onSaveRequest, onS
             <>
               <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
                 <button onClick={() => setStep("result")} className="h-12 rounded-lg border border-slate-200 font-semibold text-slate-700 hover:bg-slate-50">Kembali ke Preview</button>
-                <a href={resultImage} target="_blank" rel="noopener noreferrer" className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 font-semibold text-white hover:bg-blue-700">
+                {resultImage ? <a href={resultImage} target="_blank" rel="noopener noreferrer" className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 font-semibold text-white hover:bg-blue-700">
                   <Download className="h-4 w-4" />
                   Download Foto
-                </a>
+                </a> : <button disabled className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-slate-300 font-semibold text-white">Download Foto</button>}
               </div>
-              <button onClick={() => setStep("detail")} className="mt-7 inline-flex items-center gap-2 font-semibold text-blue-600"><Download className="h-4 w-4" />Download Invoice</button>
+              {!isAiResultAccepted && <button onClick={() => setStep("detail")} className="mt-7 inline-flex items-center gap-2 font-semibold text-blue-600"><Download className="h-4 w-4" />Download Invoice</button>}
             </>
           ) : (
             <>
@@ -443,11 +515,12 @@ export const AIPhotoStudio: React.FC<AIPhotoStudioProps> = ({ onSaveRequest, onS
             <section className="rounded-xl border border-slate-200 bg-white p-8">
               <h2 className="text-2xl font-black tracking-normal">Unggah Selfie Anda</h2>
               <div className="relative mt-7 flex min-h-[735px] items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
-                <input id="selfie-file-input" type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 cursor-pointer opacity-0" />
+                <input ref={fileInputRef} id="selfie-file-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={handleFileChange} className="absolute inset-0 cursor-pointer opacity-0" />
                 {uploadedImage ? (
                   <div className="relative z-10 flex flex-col items-center">
                     <img src={uploadedImage} alt="Preview selfie" className="h-80 w-64 rounded-xl object-cover shadow-sm" />
-                    <button onClick={(event) => { event.stopPropagation(); setUploadedImage(null); }} className="mt-5 inline-flex items-center gap-2 rounded-lg border border-red-200 px-5 py-3 text-sm font-semibold text-red-600 hover:bg-red-50">
+                    {uploadedFileName && <p className="mt-4 max-w-xs truncate text-sm font-semibold text-slate-500">{uploadedFileName}</p>}
+                    <button onClick={(event) => { event.stopPropagation(); setUploadedImage(null); setUploadedMimeType(null); setUploadedFileName(""); setResultImage(null); }} className="mt-5 inline-flex items-center gap-2 rounded-lg border border-red-200 px-5 py-3 text-sm font-semibold text-red-600 hover:bg-red-50">
                       <Trash2 className="h-4 w-4" />
                       Hapus Foto
                     </button>
@@ -456,28 +529,57 @@ export const AIPhotoStudio: React.FC<AIPhotoStudioProps> = ({ onSaveRequest, onS
                   <div className="relative z-10 max-w-sm">
                     <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-blue-100 text-blue-600"><Upload className="h-10 w-10" /></div>
                     <h3 className="mt-5 text-xl font-black">Unggah Selfie Anda</h3>
-                    <p className="mt-3 text-base leading-6 text-slate-600">Pastikan wajah terlihat jelas, tidak blur, dan pencahayaan cukup. Format JPG, PNG, max 10MB.</p>
+                    <p className="mt-3 text-base leading-6 text-slate-600">Pastikan wajah terlihat jelas, tidak blur, dan pencahayaan cukup. Format JPG, PNG, atau WebP, maksimal 4 MB.</p>
                     <div className="mt-4 flex justify-center gap-3">
                       <button type="button" onClick={(event) => { event.stopPropagation(); handleCamera(); }} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-base font-semibold text-white hover:bg-blue-700"><Camera className="h-4 w-4" />Buka Kamera</button>
-                      <button type="button" onClick={(event) => { event.stopPropagation(); document.getElementById("selfie-file-input")?.click(); }} className="rounded-lg border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-950 hover:bg-slate-50">Pilih File</button>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }} className="rounded-lg border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-950 hover:bg-slate-50">Pilih File</button>
                     </div>
                   </div>
                 )}
               </div>
+              {errorMessage && (
+                <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                  {errorMessage}
+                </div>
+              )}
             </section>
 
             <section className="rounded-xl border border-slate-200 bg-white p-8">
               <h2 className="text-2xl font-black tracking-normal">Pilih Gaya Foto</h2>
               <p className="mt-7 max-w-md text-base leading-7 text-slate-600">Pilih preset pakaian dan latar belakang yang sesuai untuk industri incaran Anda.</p>
-              <div className="mt-8 grid grid-cols-2 gap-4">
-                {styles.map((style) => (
-                  <button key={style} onClick={() => setSelectedStyle(style)} className={`rounded-xl border p-4 text-center transition ${selectedStyle === style ? "border-blue-500 ring-2 ring-blue-100" : "border-slate-200 hover:border-slate-300"}`}>
-                    <div className="flex aspect-square items-center justify-center rounded-lg bg-slate-100 text-slate-400"><ImageIcon className="h-12 w-12" /></div>
-                    <p className="mt-4 text-sm font-semibold text-slate-950">{style}</p>
+              <div className="mt-8 grid grid-cols-1 gap-4">
+                {styleOptions.map((style) => (
+                  <button key={style.id} onClick={() => setSelectedStyle(style.id)} className={`rounded-xl border p-4 text-left transition ${selectedStyle === style.id ? "border-blue-500 ring-2 ring-blue-100" : "border-slate-200 hover:border-slate-300"}`}>
+                    <div className="flex items-start gap-4">
+                      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><ImageIcon className="h-6 w-6" /></span>
+                      <span>
+                        <span className="block text-base font-black text-slate-950">{style.label}</span>
+                        <span className="mt-1 block text-sm leading-5 text-slate-600">{style.desc}</span>
+                      </span>
+                    </div>
                   </button>
                 ))}
               </div>
-              <button onClick={handleGenerate} className="mt-8 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-4 text-base font-semibold text-white hover:bg-blue-700">
+              <div className="mt-7">
+                <p className="text-sm font-black text-slate-700">Background</p>
+                <div className="mt-3 grid grid-cols-3 gap-3">
+                  {backgroundOptions.map((option) => (
+                    <button key={option.id} onClick={() => setSelectedBackground(option.id)} className={`h-11 rounded-lg border text-sm font-semibold ${selectedBackground === option.id ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>{option.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-7">
+                <p className="text-sm font-black text-slate-700">Pakaian</p>
+                <div className="mt-3 grid grid-cols-3 gap-3">
+                  {attireOptions.map((option) => (
+                    <button key={option.id} onClick={() => setSelectedAttire(option.id)} className={`h-11 rounded-lg border text-sm font-semibold ${selectedAttire === option.id ? "border-blue-500 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>{option.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-7 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+                AI dapat menghasilkan variasi kecil. Periksa wajah, detail pakaian, dan latar sebelum memakai hasilnya.
+              </div>
+              <button onClick={handleGenerate} disabled={!uploadedImage} className="mt-8 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-4 text-base font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300">
                 <Sparkles className="h-5 w-5" />
                 Generate Foto CV
               </button>
@@ -489,33 +591,34 @@ export const AIPhotoStudio: React.FC<AIPhotoStudioProps> = ({ onSaveRequest, onS
           <section className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-14 text-center">
             <div className="mx-auto h-14 w-14 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
             <h2 className="mt-6 text-2xl font-black">Mengolah Foto dengan AI</h2>
+            <p className="mx-auto mt-3 max-w-md text-base leading-7 text-slate-600">Kami memakai foto yang Anda unggah sebagai input edit agar identitas dan fitur wajah tetap dipertahankan.</p>
             <div className="mx-auto mt-6 h-2 max-w-md rounded-full bg-slate-100"><div className="h-2 rounded-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} /></div>
             <p className="mt-3 text-sm font-semibold text-slate-500">{progress}% selesai</p>
           </section>
         )}
 
-        {step === "result" && (
+        {step === "result" && resultImage && (
           <section className="mx-auto max-w-xl rounded-xl border border-slate-200 bg-white p-8 text-center">
             <h2 className="text-2xl font-black">Preview Hasil Foto CV AI Anda</h2>
             <p className="mt-3 text-base text-slate-600">
-              Lihat hasilnya dulu. Pembayaran hanya diperlukan jika Anda ingin download versi HD.
+              Lihat hasilnya dulu. Jangan simpan sampai Anda yakin wajah, pakaian, dan latar sudah sesuai.
             </p>
             <img src={resultImage} alt="Hasil Foto CV" className="mx-auto mt-8 h-[420px] w-80 rounded-xl object-cover" />
-            {!hasPaid && (
-              <div className="mx-auto mt-5 max-w-sm rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">
-                Preview gratis. Download HD: {formatPrice(totalPayment)}
+            <div className="mx-auto mt-5 max-w-sm rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+              AI dapat menghasilkan variasi kecil. Periksa hasil sebelum memilih Gunakan Hasil.
+            </div>
+            {errorMessage && (
+              <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                {errorMessage}
               </div>
             )}
-            <div className="mt-8 grid grid-cols-2 gap-4">
-              <button onClick={() => setStep("upload")} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-5 py-3 font-semibold text-slate-700 hover:bg-slate-50"><RefreshCw className="h-4 w-4" />Kembali / Ulangi</button>
-              {hasPaid ? (
-                <a href={resultImage} target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"><Download className="h-4 w-4" />Download Foto HD</a>
-              ) : (
-                <button onClick={() => setStep("checkout")} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700">
-                  <Download className="h-4 w-4" />
-                  Bayar untuk Download
-                </button>
-              )}
+            <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <button onClick={() => setStep("upload")} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-5 py-3 font-semibold text-slate-700 hover:bg-slate-50"><ArrowLeft className="h-4 w-4" />Kembali</button>
+              <button onClick={handleGenerate} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 px-5 py-3 font-semibold text-slate-700 hover:bg-slate-50"><RefreshCw className="h-4 w-4" />Generate Ulang</button>
+              <button onClick={handleUseResult} disabled={isSavingResult} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300">
+                <CheckCircle2 className="h-4 w-4" />
+                {isSavingResult ? "Menyimpan" : "Gunakan Hasil"}
+              </button>
             </div>
           </section>
         )}
